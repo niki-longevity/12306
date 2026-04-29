@@ -18,7 +18,7 @@ public class JwtAuthFilter implements Filter {
         HttpServletRequest req = (HttpServletRequest) request;
         HttpServletResponse res = (HttpServletResponse) response;
 
-        String path = req.getRequestURI();
+        String path = req.getServletPath();
         // Skip public endpoints
         if (path.equals("/user/login") || path.equals("/user/add")) {
             chain.doFilter(request, response);
@@ -54,5 +54,6 @@ public class JwtAuthFilter implements Filter {
         response.setStatus(401);
         response.setContentType("application/json;charset=utf-8");
         response.getWriter().write("{\"code\":0,\"msg\":\"" + msg + "\"}");
+        response.getWriter().flush();
     }
 }
