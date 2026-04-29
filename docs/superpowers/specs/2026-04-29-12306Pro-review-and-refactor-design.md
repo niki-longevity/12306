@@ -100,15 +100,77 @@
 订单模块依赖购票结果，拆成微服务之前先在单体中验证接口和业务逻辑。
 
 #### 3.5 订单实体与表结构
-- `entity/Order`：id, userId, date, trainCode, startStation, endStation, seatType, carriageNum, seatNum, status, createTime
+- `entity/Order`：id, userId, date, trainCode, startStation, endStation, seatType, carriageNum, seatNum, status(UNPAID/PAID/CANCELLED/EXPIRED), expireTime, createTime, updateTime
 - `entity/OrderPassenger`：id, orderId, realName, idCard
 - `mapper/OrderMapper` + `mapper/OrderPassengerMapper`
 - 建表 DDL（放在 `docs/` 目录）
 
-#### 3.6 订单 Service & Controller
-- `OrderService`：create(购票成功后调用)、findByUser、findById、cancel
-- `OrderController`：`GET /order/list`、`GET /order/{id}`、`PUT /order/cancel/{id}`
-- `TicketBuyServiceImpl` 购票成功后调用 `OrderService.create()` 同步落库（RocketMQ 在拆分后启用）
+#### 3.6 订单流程：同步落库 + 延时关单
+
+**购票成功链路：**
+
+```
+Lua 脚本成功（Redis 位图+库存已扣）
+    │
+    ├── INSERT orders (status=UNPAID, expire_time=now()+30min)
+    ├── INSERT order_passengers
+    │   └── 以上在同一个 DB 事务中
+    │
+    ├── 发 RocketMQ 延时消息（delayLevel=16 → 30min）
+    │   └── payload: {orderId, trainCode, date, seatType, sections...}
+    │
+    └── 返回 "排队中，请30分钟内支付"
+```
+
+**支付模拟：**
+
+```
+PUT /order/{id}/pay
+    │
+    └── UPDATE orders SET status='PAID' WHERE id=? AND status='UNPAID'
+        └── affected_rows=1 → 成功
+        └── affected_rows=0 → 已过期/重复支付，抛异常
+```
+
+**延时关单消费者：**
+
+```
+收到 30min 延时消息 → SELECT order WHERE id = orderId
+    │
+    ├── status=PAID  → ACK，不管
+    ├── status=CANCELLED → ACK，不管
+    │
+    └── status=UNPAID →
+          ├── UPDATE orders SET status='CANCELLED' WHERE id=? AND status='UNPAID'
+          ├── Lua 脚本回滚 Redis：
+          │     ├── BITFIELD SET 把座位区间 bit 位清零
+          │     └── HINCRBY 库存加回
+          └── ACK
+```
+
+**回收 Redis 库存的 Lua 脚本（与购票镜像对称）：**
+
+```lua
+-- 传入：bitmapKey, stockKey, seatStartBit, userStartSection, userEndSection, 
+--       totalSectionCount, passengerCount, sectionsJson
+-- 1. 计算乘客区间掩码
+-- 2. BITFIELD SET 把对应 bit 位设回 0（可重入：设两次还是0）
+-- 3. 遍历 sections，HINCRBY 加回库存
+```
+
+**定时任务兜底（每 10 分钟）：**
+
+```sql
+SELECT * FROM orders 
+WHERE status = 'UNPAID' AND expire_time < NOW() 
+LIMIT 100;
+```
+对每条记录执行和延时消息相同的关单逻辑。`UPDATE ... WHERE status='UNPAID'` 是天然乐观锁，定时任务和延时消息抢同一行，只有一个能成功（affected_rows=1），后续的 affected_rows=0 直接跳过。Lua 回滚 Redis 也是幂等的——bit 位清零操作重复执行结果不变。
+
+#### 3.7 订单 Service & Controller
+- `OrderService`：create、pay（模拟支付）、cancel（手动取消）、findByUser、findById
+- `OrderController`：`GET /order/list`、`GET /order/{id}`、`PUT /order/{id}/pay`、`PUT /order/{id}/cancel`
+- `TicketBuyServiceImpl` 购票成功后调用 `OrderService.create()` 同步落库
 
 ### 阶段 3 — A: 安全修复
 
@@ -131,9 +193,48 @@
 3. 按 2.3 的职责表迁移代码到对应模块
 4. **公共模块** (`common/`)：Result、BaseException、全局异常处理器、共享实体
 5. Gateway 引入 `spring-cloud-gateway` + JWT 验签 Filter
-6. ticket-service 购票成功后通过 RocketMQ 发送消息，order-service 消费
 
-#### 3.10 拆分后各模块依赖
+#### 3.10 拆分后：订单异步落库方案对比
+
+拆分后 ticket-service 和 order-service 不在同一进程，购票成功后的订单落库需要从同步切异步。两种方案：
+
+**方案 A：outbox 本地消息表**（默认方案）
+
+```
+Lua 成功 → INSERT ticket_outbox → 立即发 RocketMQ → order-service 消费
+                                           │
+                                           └── 失败？→ 定时扫描 PENDING 记录重试
+```
+
+- 优点：实现简单，无额外中间件
+- 缺点：代码侵入（每发消息都得写 outbox），数据膨胀需清理
+
+**方案 B：Canal CDC**（升级方向，面试高阶回答）
+
+```
+Lua 成功 → INSERT ticket_outbox（业务代码只管写表）
+                │
+                ▼
+         MySQL binlog 产生 INSERT 记录
+                │
+                ▼
+         Canal 监听 → 推送到 RocketMQ → order-service 消费
+```
+
+- 优点：应用代码零感知，binlog 级别可靠性（与 DB 强一致），不丢消息
+- 缺点：多一个中间件，需部署 Canal Server + ZK
+
+**本阶段采用方案 A（outbox）**，Canal 列为拆分后第二阶段的升级方向。选择理由：当前交易量不需要中间件级别的 CDC，outbox 模式实现简单且够用。
+
+#### 3.11 拆分后延时关单调整
+
+拆分后延时消息由 ticket-service 在写 outbox 的同时发送。关单消费者仍然在 order-service，收到消息后：
+```
+SELECT order → 判断状态 → CANCELLED 则 Lua 回滚 Redis（Redis 是共享的）
+```
+注意：回滚 Redis 位图的 Lua 脚本需要 ticket-service 暴露一个内部接口，或关单消费者直接连 Redis 执行 Lua。
+
+#### 3.12 拆分后各模块依赖
 
 | 模块 | Spring Boot | 特殊依赖 |
 |------|------------|---------|
@@ -172,7 +273,10 @@
 | JWT 库 | jjwt (io.jsonwebtoken) | 社区最活跃的 Java JWT 库 |
 | 加密算法 | BCrypt | 行业标准，Spring Security 内置 |
 | 微服务通信 | HTTP（无 Feign） | 初期无服务间同步调用，保持简单 |
-| 订单落库 | 阶段2同步 → 阶段4切MQ | 先在单体中验证逻辑，拆分后再切异步 |
+| 订单落库 | 阶段2同步 → 阶段4切 outbox + MQ | 先在单体中验证逻辑，拆分后再切异步 |
+| 延时关单 | RocketMQ delayLevel=16 (30min) + 定时任务兜底 | 双保险，UPDATE WHERE status='UNPAID' 天然乐观锁防重 |
+| 关单防重 | SQL 乐观锁 + Lua 幂等 | UPDATE WHERE status='UNPAID' 保证只有一条执行成功，Lua bit 清零可重入 |
+| CDC 方案 | 阶段4用 outbox，Canal 列后续升级 | 当前量级 outbox 够用，Canal 需额外运维成本 |
 | 公共代码 | common 模块（非独立服务） | 避免重复，但只放真正共享的代码 |
 | ShardingSphere | 保留现有配置 | 拆分后各服务各连各的数据源 |
 
@@ -181,6 +285,8 @@
 ## 5. 风险与边界
 
 - **不引入 Spring Cloud 全家桶**：只用 Gateway，不引入 Nacos/Consul（初期用硬编码 URL，后续需要服务发现再加）
-- **数据一致性**：购票成功后同步落库（阶段2）→ 异步落库（阶段4）；订单状态"待确认→已确认"需对账机制
+- **数据一致性**：购票成功后同步落库（阶段2）→ outbox + Canal（阶段4）；延时关单双保险（MQ + 定时任务），UPDATE WHERE status='UNPAID' 防重
+- **延时消息误差**：RocketMQ delayLevel=16 对应 30min，实际投递可能有秒到十余秒偏差，关单以 expire_time 为准，消息只是触发器
 - **表结构不变**：user 表分片策略不变；ticket 相关表保持现有结构；order 表新建
-- **不碰 RocketMQ 配置**：保留现有配置，仅新增 order 消费组
+- **不碰 RocketMQ 配置**：保留现有配置，仅新增延时消息 topic 和 order 消费组
+- **支付为模拟实现**：不接入真实支付渠道，`PUT /order/{id}/pay` 直接改状态
