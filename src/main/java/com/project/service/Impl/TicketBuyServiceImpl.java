@@ -76,87 +76,13 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             }
     );
 
-    // TODO 抽离为单独lua脚本文件
     static {
-        // 购票Lua脚本
         TICKET_BUY_LUA_SCRIPT = new DefaultRedisScript<>();
-        TICKET_BUY_LUA_SCRIPT.setScriptText(
-                "-- 1. 先解析所有ARGV参数（必须放在最前面，确保变量先定义后使用）\n" +
-                        "local bitmapKey = KEYS[1]\n" +
-                        "local stockKey = KEYS[2]\n" +
-                        "local seatStartBit = tonumber(ARGV[1]) or 0\n" +
-                        "local userStartSection = tonumber(ARGV[2]) or 0  -- 乘客起始区间（比如3）\n" +
-                        "local userEndSection = tonumber(ARGV[3]) or 0    -- 乘客结束区间（比如8）\n" +
-                        "local totalSectionCount = tonumber(ARGV[4]) or 0 -- 车次总区间数（比如19）\n" +
-                        "local passengerCount = tonumber(ARGV[5]) or 0\n" +
-                        "local sectionsStr = ARGV[6] or ''\n" +
-                        "\n" +
-//                        "-- 2. 校验参数合法性\n" +
-//                        "if seatStartBit <= 0 or userStartSection <= 0 or userEndSection <= 0 or totalSectionCount <= 0 or passengerCount <= 0 then\n" +
-//                        "    return -3  -- 参数非法\n" +
-//                        "end\n" +
-//                        "if userStartSection > userEndSection then\n" +
-//                        "    return -4  -- 区间范围错误\n" +
-//                        "end\n" +
-//                        "\n" +
-                        "-- 3. 解析区间列表\n" +
-                        "local sections = {}\n" +
-                        "local ok, res = pcall(cjson.decode, sectionsStr)\n" +
-                        "if ok and type(res) == 'table' then\n" +
-                        "    sections = res\n" +
-                        "else\n" +
-                        "    sectionsStr = string.gsub(sectionsStr, '[%[%]%s]', '')\n" +
-                        "    for num in string.gmatch(sectionsStr, '%d+') do\n" +
-                        "        table.insert(sections, tonumber(num))\n" +
-                        "    end\n" +
-                        "end\n" +
-                        "if #sections == 0 then\n" +
-                        "    return -2  -- 区间解析失败\n" +
-                        "end\n" +
-                        "\n" +
-                        "-- 4. 一次性读取该座位的所有bit位（总区间数）\n" +
-                        "local bitFieldCmd = {'BITFIELD', bitmapKey, 'GET', 'u'..totalSectionCount, seatStartBit}\n" +
-                        "local seatBitmap = redis.call(unpack(bitFieldCmd))[1] or 0\n" +
-                        "\n" +
-                        "-- 5. 生成乘客区间的精准掩码（仅标记userStartSection~userEndSection区间）\n" +
-                        "local sectionMask = 0\n" +
-                        "for i = userStartSection, userEndSection do\n" +
-                        "    -- 区间从1开始，bit偏移从0开始 → i-1\n" +
-                        "    sectionMask = bit.bor(sectionMask, bit.lshift(1, i - 1))\n" +
-                        "end\n" +
-                        "\n" +
-                        "-- 6. 判断：仅乘客区间的bit位全为0才算空闲\n" +
-                        "if bit.band(seatBitmap, sectionMask) ~= 0 then\n" +
-                        "    return 0  -- 座位已售（乘客区间有bit为1）\n" +
-                        "end\n" +
-                        "\n" +
-                        "-- 8. 一次性设置乘客区间的bit位为1\n" +
-                        "local newSeatBitmap = bit.bor(seatBitmap, sectionMask)\n" +
-                        "redis.call('BITFIELD', bitmapKey, 'SET', 'u'..totalSectionCount, seatStartBit, newSeatBitmap)\n" +
-                        "\n" +
-                        "-- 7. 扣减库存\n" +
-                        "for _, section in ipairs(sections) do\n" +
-                        "    redis.call('HINCRBY', stockKey, tostring(section), -passengerCount)\n" +
-                        "end\n" +
-                        "\n" +
-                        "return 1"
-        );
+        TICKET_BUY_LUA_SCRIPT.setLocation(new org.springframework.core.io.ClassPathResource("lua/ticket_buy.lua"));
         TICKET_BUY_LUA_SCRIPT.setResultType(Long.class);
 
-        // 获取令牌的 lua 脚本
         TOKEN_BUCKET_LUA_SCRIPT = new DefaultRedisScript<>();
-        TOKEN_BUCKET_LUA_SCRIPT.setScriptText(
-                "local tokenKey = KEYS[1]\n" +
-                        "local needToken = tonumber(ARGV[1])\n" +
-                        "local resetToken = tonumber(ARGV[2])\n" +
-                        "\n" +
-                        "local currentToken = tonumber(redis.call('GET', tokenKey) or 0)\n" +
-                        "if currentToken < needToken then\n" +
-                        "    redis.call('SET', tokenKey, resetToken)\n" +
-                        "    return -1\n" +
-                        "end\n" +
-                        "return redis.call('DECRBY', tokenKey, needToken)"
-        );
+        TOKEN_BUCKET_LUA_SCRIPT.setLocation(new org.springframework.core.io.ClassPathResource("lua/token_bucket.lua"));
         TOKEN_BUCKET_LUA_SCRIPT.setResultType(Long.class);
     }
 
