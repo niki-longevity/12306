@@ -3,6 +3,8 @@ package com.project.service.Impl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.handler.builder.TicketValidateChainBuilder;
+import com.project.handler.chain.AbstractTicketValidateHandler;
+import com.project.utils.TicketValidateContext;
 import com.project.mapper.TrainCarriageMapper;
 import com.project.pojo.bo.TicketListBO;
 import com.project.pojo.dto.TicketBuyDTO;
@@ -27,7 +29,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 @Slf4j
-//@Service
+@Service
 @RequiredArgsConstructor
 public class TicketBuyServiceImpl implements TicketBuyService {
 
@@ -166,19 +168,19 @@ public class TicketBuyServiceImpl implements TicketBuyService {
      */
     @Override
     public String buy(TicketBuyDTO ticketBuyDTO) {
-//        // ===== 责任链校验 =====
-//        // 校验参数是否为空、校验车次是否存在、校验车站在车次中是否合法
-//        // 1. 构建校验上下文
-//        TicketValidateContext context = new TicketValidateContext();
-//        context.setTicketBuyDTO(ticketBuyDTO);
-//        // 2. 获取校验链条并执行
-//        AbstractTicketValidateHandler validateChain = ticketValidateChainBuilder.buildChain();
-//        validateChain.handle(context);
-//        // 3. 校验结果判断
-//        if (!context.isPass()) {
-//            log.error("购票校验失败：{}，参数：{}", context.getErrorMsg(), ticketBuyDTO);
-//            return context.getErrorMsg();
-//        }
+        // ===== 责任链校验 =====
+        // 校验参数是否为空、校验车次是否存在、校验车站在车次中是否合法
+        // 1. 构建校验上下文
+        TicketValidateContext context = new TicketValidateContext();
+        context.setTicketBuyDTO(ticketBuyDTO);
+        // 2. 获取校验链条并执行
+        AbstractTicketValidateHandler validateChain = ticketValidateChainBuilder.buildChain();
+        validateChain.handle(context);
+        // 3. 校验结果判断
+        if (!context.isPass()) {
+            log.error("购票校验失败：{}，参数：{}", context.getErrorMsg(), ticketBuyDTO);
+            return context.getErrorMsg();
+        }
 
         // 1、提取参数
         LocalDate date = ticketBuyDTO.getDate();
