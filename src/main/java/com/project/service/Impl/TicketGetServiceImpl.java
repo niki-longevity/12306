@@ -1,4 +1,4 @@
-package com.project.service.Impl;
+package com.project.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.google.common.util.concurrent.RateLimiter;
@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class TicketGetGetServiceImpl implements TicketGetService {
+public class TicketGetServiceImpl implements TicketGetService {
 
     // ===== 基础配置 =====
     private static final double BUSINESS_SEAT_PRICE_PER_MILE = 1.5;  // 商务座单价
@@ -80,17 +80,17 @@ public class TicketGetGetServiceImpl implements TicketGetService {
         // 4、从JVM缓存提取车次信息
         // TODO 应该缓存热点车次，避免缓存溢出；然后先降级查Redis；最后兜底查数据库（考虑异步查询策略）
         Map<String, TicketListBO> trainBoMap = getTrainBoFromJvmCache(date, trainCodes);
-//        List<String> missTrainCodes = trainCodes.stream()
-//                .filter(code -> !trainBoMap.containsKey(code))
-//                .toList();
-//        if (!CollectionUtils.isEmpty(missTrainCodes)) {
-//            log.warn("JVM缓存未命中车次数量：{}，开始降级查询", missTrainCodes.size());
-//            Map<String, TicketListBO> missTrainBoMap = getTrainBoFromDbWithLimit(date, missTrainCodes);
+        List<String> missTrainCodes = trainCodes.stream()
+                .filter(code -> !trainBoMap.containsKey(code))
+                .toList();
+        if (!CollectionUtils.isEmpty(missTrainCodes)) {
+            log.warn("JVM缓存未命中车次数量：{}，开始降级查询", missTrainCodes.size());
+            Map<String, TicketListBO> missTrainBoMap = getTrainBoFromDbWithLimit(date, missTrainCodes);
             // 降级查询结果放入JVM缓存（预热）
-//            putMissTrainBoToJvmCache(missTrainBoMap);
+            putMissTrainBoToJvmCache(missTrainBoMap);
             // 合并缓存命中+降级结果
-//            trainBoMap.putAll(missTrainBoMap);
-//        }
+            trainBoMap.putAll(missTrainBoMap);
+        }
 
         // 5、提取所有车次的站序 / 库存信息
         // 临时存储每个车次的核心业务信息
