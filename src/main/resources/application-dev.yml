@@ -1,0 +1,13 @@
+spring:
+#  datasource:
+#    username: root
+#    password: 88888888
+  data:
+    redis:
+      host: 172.22.32.238
+      port: 6379
+      password: 88888888
+
+
+
+

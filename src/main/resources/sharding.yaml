@@ -1,0 +1,72 @@
+databaseName: sharding_db
+
+dataSources:
+  ds_0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://localhost:3306/db_0?serverTimezone=UTC&rewriteBatchedStatements=true
+      &sessionVariables=unique_checks=0,foreign_key_checks=0&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: 88888888
+  ds_1:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://localhost:3307/db_1?serverTimezone=UTC&rewriteBatchedStatements=true
+      &sessionVariables=unique_checks=0,foreign_key_checks=0&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: 88888888
+  ds_2:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://localhost:3308/db_2?serverTimezone=UTC&rewriteBatchedStatements=true
+      &sessionVariables=unique_checks=0,foreign_key_checks=0&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: 88888888
+
+rules:
+  # 1.分片规则
+  - !SHARDING
+    tables:
+      # 逻辑表名 user
+      user:
+        # 18 个物理节点
+        actualDataNodes: ds_${0..2}.user_${0..5}
+        databaseStrategy:
+          standard:
+            shardingColumn: phone    # 分库键
+            shardingAlgorithmName: database_mod
+        tableStrategy:
+          standard:
+              shardingColumn: phone  # 分表键（可与分库键相同或不同）
+              shardingAlgorithmName: table_mod
+        # 主键生成策略：雪花算法
+        keyGenerateStrategy:
+          column: id
+          keyGeneratorName: snowflake
+
+    # 定义主键生成器
+    keyGenerators:
+      snowflake:
+        type: SNOWFLAKE
+        props:
+          worker-id: 123   # 可选，单机测试可固定，分布式环境需保证唯一（0~1023）
+
+    shardingAlgorithms:
+      database_mod:
+        type: INLINE
+        props:
+          algorithm-expression: ds_${phone.toLong() % 3} # 分库算法
+      table_mod:
+        type: INLINE
+        props:
+          algorithm-expression: user_${(phone.toLong().intdiv(3)) % 6} # 分表算法
+
+  # 2.单表规则
+  # 它的作用是：所有没有配置在 !SHARDING 里的表，都默认去 ds_0(映射到 db_12306) 找
+  - !SINGLE
+    tables:
+      - "*.*"  # 加载所有普通表
+    defaultDataSource: ds_0
+
+props:
+  sql-show: true # 开启后，你能在控制台看到 MyBatis 的 SQL 被发往了哪个库
