@@ -12,18 +12,16 @@ import com.project.pojo.entity.User;
 import com.project.pojo.entity.UsernamePhone;
 import com.project.pojo.vo.UserLoginVO;
 import com.project.service.UserService;
+import com.project.utils.JwtUtil;
 import com.project.utils.LoginIdentityUtils;
 import com.project.utils.LoginType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBloomFilter;
 import org.springframework.beans.BeanUtils;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 @Service
 @Slf4j
@@ -31,7 +29,6 @@ import java.util.concurrent.TimeUnit;
 public class UserServiceImpl implements UserService {
 
     private final UserMapper userMapper;
-    private final StringRedisTemplate stringRedisTemplate;
     private final RBloomFilter<String> usernameBloomFilter;
     private final UsernamePhoneMapper usernamePhoneMapper;
 
@@ -57,9 +54,11 @@ public class UserServiceImpl implements UserService {
             // 查询路由表，取出分片键 phone，避免读扩散
             LambdaQueryWrapper<UsernamePhone> wrapper1 = new LambdaQueryWrapper<>();
             wrapper1.eq(UsernamePhone::getUsername, loginId);
-            String phone = usernamePhoneMapper.selectOne(wrapper1).getPhone();
-            // 根据分片键 phone 查询
-            wrapper.eq(User::getPhone, phone);
+            UsernamePhone usernamePhone = usernamePhoneMapper.selectOne(wrapper1);
+            if (usernamePhone == null) {
+                throw new AccountNotFoundException("手机号或密码错误");
+            }
+            wrapper.eq(User::getPhone, usernamePhone.getPhone());
         }
         User user = userMapper.selectOne(wrapper);
 
@@ -80,15 +79,10 @@ public class UserServiceImpl implements UserService {
             throw new PasswordErrorException("手机号或密码错误");
         }
 
-        // 5. 生成令牌 (UUID)
-        String token = UUID.randomUUID().toString().replace("-", "");
+        // 5. 生成 JWT token
+        String token = JwtUtil.generateToken(user.getId(), user.getUsername());
 
-        // 6. 将令牌存入 Redis，设置有效期（比如2小时）
-        // Key:"user_token:"+token   Value:userId
-        stringRedisTemplate.opsForValue()
-                .set("user_token:" + token, user.getId().toString(), 2, TimeUnit.HOURS);
-
-        // 7. 封装返回结果 VO
+        // 6. 封装返回结果 VO
         return UserLoginVO.builder()
                 .id(user.getId())
                 .username(user.getUsername())
@@ -119,5 +113,14 @@ public class UserServiceImpl implements UserService {
 
         // 插入数据库
         userMapper.insert(user);
+
+        // 用户名加入布隆过滤器
+        usernameBloomFilter.add(username);
+
+        // 插入用户名-手机号路由表
+        UsernamePhone up = new UsernamePhone();
+        up.setUsername(username);
+        up.setPhone(user.getPhone());
+        usernamePhoneMapper.insert(up);
     }
 }
