@@ -17,6 +17,8 @@ import com.project.ticket.pojo.enums.SeatType;
 import com.project.ticket.service.TicketBuyService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.data.redis.core.RedisCallback;
@@ -44,11 +46,11 @@ public class TicketBuyServiceImpl implements TicketBuyService {
     private static final String TOKEN_KEY_PREFIX = "Token:%s:%s";
     private static final String STOCK_KEY_PREFIX = "Stock:%s:%s:%d";
     private static final String BITMAP_KEY_PREFIX = "%s:%s:%d:bitmap";
-    private static final String LOCAL_LOCK_KEY_PREFIX = "LocalLock:%s:%s:%d:%d:%d";
+    private static final String LOCK_KEY_PREFIX = "Lock:%s:%s:%d:%d:%d";
 
-    // V1: 熔断参数
-    private static final int MAX_ATTEMPTS = 100;
-    private static final long TIMEOUT_MS = 5000;
+    // V2: 自适应熔断 — 票多时限搜索次数，票少时放开
+    private static final int DEFAULT_MAX_ATTEMPTS = 100;
+    private static final int LOW_STOCK_THRESHOLD_MULTIPLIER = 3;
 
     // ===== 座位全局顺序编号定义 =====
     private static final List<Integer> BUSINESS_SEAT_GLOBAL_INDEX = Arrays.asList(1, 2, 3, 4, 5);
@@ -57,13 +59,14 @@ public class TicketBuyServiceImpl implements TicketBuyService {
 
     // ===== 依赖注入 =====
     private final StringRedisTemplate stringRedisTemplate;
+    private final RedissonClient redissonClient;
     private final CacheManager trainStopCacheManager;
     private final ObjectMapper objectMapper;
     private final TicketValidateChainBuilder ticketValidateChainBuilder;
     private final OrderMapper orderMapper;
     private final OrderPassengerMapper orderPassengerMapper;
 
-    // 本地锁
+    // 本地锁（JVM 内互斥，作为分布式锁的第一道防线）
     private final ConcurrentHashMap<String, ReentrantLock> localLockMap = new ConcurrentHashMap<>();
 
     // Lua 脚本（从文件加载）
@@ -92,7 +95,6 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             return Result.error(context.getErrorMsg());
         }
 
-        // 直接从校验上下文获取已查过的 BO，避免重复查缓存
         TicketListBO trainBO = context.getTicketListBO();
 
         // 提取参数
@@ -101,16 +103,13 @@ public class TicketBuyServiceImpl implements TicketBuyService {
         String startStation = ticketBuyDTO.getStartStation();
         String endStation = ticketBuyDTO.getEndStation();
         int seatTypeCode = ticketBuyDTO.getSeatType();
-        SeatType seatType = SeatType.fromCode(seatTypeCode);
         List<TicketBuyDTO.Passenger> passengerList = ticketBuyDTO.getPassengerList();
         int passengerCount = passengerList.size();
 
-        // 如果校验链没取 BO（降级），再从缓存取
+        // 校验链没取到 BO，从缓存取
         if (trainBO == null) {
             Cache cache = trainStopCacheManager.getCache("trainStopCache");
-            if (cache == null) {
-                return Result.error("系统异常");
-            }
+            if (cache == null) return Result.error("系统异常");
             String cacheKey = String.format("%s:%s", date, trainCode);
             trainBO = cache.get(cacheKey, TicketListBO.class);
             if (trainBO == null || CollectionUtils.isEmpty(trainBO.getStopoverStations())) {
@@ -126,7 +125,6 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             if (endStation.equals(station.getStopoverStation())) endIndex = station.getStationIndex();
         }
         if (startIndex == null || endIndex == null || startIndex >= endIndex) {
-            log.error("起止站序错误：{}→{}，站序{}→{}", startStation, endStation, startIndex, endIndex);
             return Result.error("经停站信息错误");
         }
 
@@ -143,23 +141,21 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             sectionsJson = sections.toString();
         }
         int totalSectionCount = trainBO.getStopoverStations().size() - 1;
-        if (totalSectionCount <= 0) {
-            return Result.error("系统异常");
-        }
+        if (totalSectionCount <= 0) return Result.error("系统异常");
 
-        // Redis 库存检查
+        // ===== Redis 库存检查 =====
         String stockKey = String.format(STOCK_KEY_PREFIX, date, trainCode, seatTypeCode);
-        List<String> sectionStrList = sections.stream().map(String::valueOf).collect(Collectors.toList());
         org.springframework.data.redis.core.HashOperations<String, String, String> hashOps = stringRedisTemplate.opsForHash();
+        List<String> sectionStrList = sections.stream().map(String::valueOf).collect(Collectors.toList());
         List<String> stockObjList = hashOps.multiGet(stockKey, sectionStrList);
         int minStock = stockObjList.stream()
                 .filter(Objects::nonNull).mapToInt(Integer::parseInt).min().orElse(0);
         if (minStock < passengerCount) {
-            log.warn("车次{}座位类型{}库存不足：最小库存{}，需{}", trainCode, seatTypeCode, minStock, passengerCount);
+            log.warn("车次{}座位类型{}库存不足", trainCode, seatTypeCode);
             return Result.error("余票不足");
         }
 
-        // Token 桶限流
+        // ===== Token 桶限流 =====
         String tokenKey = String.format(TOKEN_KEY_PREFIX, date, trainCode);
         Long tokenResult = stringRedisTemplate.execute(
                 TOKEN_BUCKET_LUA_SCRIPT,
@@ -173,62 +169,58 @@ public class TicketBuyServiceImpl implements TicketBuyService {
 
         // 车厢数量
         int carNum = getCarNumFromCache(trainBO, seatTypeCode);
-        if (carNum <= 0) {
-            return Result.error("该座位类型无车厢");
-        }
+        if (carNum <= 0) return Result.error("该座位类型无车厢");
 
-        // Redis 拉取位图
+        // ===== Redis 拉取位图 =====
         String bitmapKey = String.format(BITMAP_KEY_PREFIX, date, trainCode, seatTypeCode);
         byte[] bitmapBytes = stringRedisTemplate.execute((RedisCallback<byte[]>) connection ->
                 connection.get(bitmapKey.getBytes()));
-        if (bitmapBytes == null) {
-            return Result.error("系统异常");
-        }
+        if (bitmapBytes == null) return Result.error("系统异常");
 
-        // ===== V1 核心：合并遍历 + 随机起始 + 熔断 =====
+        // ===== V2: 自适应熔断 =====
+        int maxAttempts = (minStock < passengerCount * LOW_STOCK_THRESHOLD_MULTIPLIER)
+                ? Integer.MAX_VALUE   // 票少：不限制，允许扫完所有座位
+                : DEFAULT_MAX_ATTEMPTS;
+
         List<Integer> seatGlobalIndexList = getSeatGlobalIndexList(seatTypeCode);
         int totalSeats = carNum * seatGlobalIndexList.size();
-
-        // 随机起始位置，分散并发冲突
         int startPos = ThreadLocalRandom.current().nextInt(totalSeats);
-        long startTime = System.currentTimeMillis();
         int attempts = 0;
-
         int boughtCarRelIdx = -1, boughtSeatGlobalIdx = -1;
 
-        for (int offset = 0; offset < totalSeats && attempts < MAX_ATTEMPTS; offset++) {
-            // 超时熔断
-            if (System.currentTimeMillis() - startTime > TIMEOUT_MS) {
-                log.warn("购票超时熔断：车次{}，已尝试{}次", trainCode, attempts);
-                return Result.error("系统繁忙，请重试");
-            }
-
-            // 从随机位置开始，循环遍历
+        for (int offset = 0; offset < totalSeats && attempts < maxAttempts; offset++) {
             int pos = (startPos + offset) % totalSeats;
             int carRelativeIndex = pos / seatGlobalIndexList.size() + 1;
             int seatGlobalIndex = seatGlobalIndexList.get(pos % seatGlobalIndexList.size());
 
             long seatStartBit = calculateSeatStartBit(carRelativeIndex, seatGlobalIndex, totalSectionCount, seatTypeCode);
 
-            // JVM 内存快速判断空闲
-            if (!isSeatFreeInMemory(bitmapBytes, seatStartBit, startSection, endSection, totalSectionCount)) {
+            // V2: 一次提取 + 一次 AND 判断空闲
+            if (!isSeatFreeInMemory(bitmapBytes, seatStartBit, startSection, endSection)) {
                 continue;
             }
 
             attempts++;
 
-            // 本地锁
-            String localLockKey = String.format(LOCAL_LOCK_KEY_PREFIX, date, trainCode, seatTypeCode, carRelativeIndex, seatGlobalIndex);
-            if (localLockMap.containsKey(localLockKey)) {
-                continue;
-            }
-            ReentrantLock localLock = localLockMap.computeIfAbsent(localLockKey, k -> new ReentrantLock());
-            boolean lockAcquired = false;
-            try {
-                lockAcquired = localLock.tryLock(0, TimeUnit.SECONDS);
-                if (!lockAcquired) continue;
+            String lockKey = String.format(LOCK_KEY_PREFIX, date, trainCode, seatTypeCode, carRelativeIndex, seatGlobalIndex);
 
-                // Lua 原子操作
+            // ===== V2: 双锁机制 =====
+            // 第一道：本地锁 (JVM 内互斥)
+            ReentrantLock localLock = localLockMap.computeIfAbsent(lockKey, k -> new ReentrantLock());
+            boolean localLocked = false;
+            RLock distLock = null;
+            boolean distLocked = false;
+
+            try {
+                localLocked = localLock.tryLock(0, TimeUnit.SECONDS);
+                if (!localLocked) continue;
+
+                // 第二道：分布式锁 (跨 JVM 互斥，Redisson watchdog 自动续期)
+                distLock = redissonClient.getLock(lockKey);
+                distLocked = distLock.tryLock(100, TimeUnit.MILLISECONDS);
+                if (!distLocked) continue;
+
+                // Lua 原子操作 — 最终裁判
                 Long luaResult = stringRedisTemplate.execute(
                         TICKET_BUY_LUA_SCRIPT,
                         Arrays.asList(bitmapKey, stockKey),
@@ -252,23 +244,26 @@ public class TicketBuyServiceImpl implements TicketBuyService {
                 if (luaResult == -2) {
                     return Result.error("系统异常，请重试");
                 }
-                // luaResult == 0: 已被占，继续
+                // luaResult == 0: 已被占
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                log.error("获取本地锁中断", e);
+                log.error("锁获取中断", e);
             } finally {
-                if (lockAcquired) {
+                if (distLocked && distLock != null) {
+                    try { distLock.unlock(); } catch (Exception ignored) {}
+                }
+                if (localLocked) {
                     localLock.unlock();
-                    localLockMap.remove(localLockKey); // V1: 直接删除，不异步
+                    localLockMap.remove(lockKey);
                 }
             }
         }
 
         if (boughtCarRelIdx < 0) {
-            return Result.error(attempts >= MAX_ATTEMPTS ? "系统繁忙，请重试" : "无可用座位");
+            return Result.error(attempts >= maxAttempts ? "系统繁忙，请重试" : "无可用座位");
         }
 
-        // ===== V1: 恢复订单落库 =====
+        // ===== 订单落库 =====
         int finalCarAbsIdx = convertCarRelativeToAbsolute(boughtCarRelIdx, seatTypeCode);
         try {
             createOrder(date, trainCode, startStation, endStation, seatTypeCode,
@@ -277,14 +272,56 @@ public class TicketBuyServiceImpl implements TicketBuyService {
                     passengerList, boughtCarRelIdx, seatGlobalIndexList);
         } catch (Exception e) {
             log.error("订单创建失败：车次{}，座位{}/{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx, e);
-            // 不回滚 Redis —— 由关单定时任务兜底回收
         }
 
         log.info("购票成功：车次{}，车厢{}，座位{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
         return Result.success("排队中");
     }
 
-    // ===================== V1: 同步创建订单 =====================
+    // ===================== V2: 位图空闲判断 — 一次提取 + 一次 AND =====================
+
+    /**
+     * 判断座位在乘客乘车区间是否空闲。
+     * 位图结构：每个座位占 totalSectionCount 个 bit。
+     * 座位 k 的 bit 在 [k * totalSectionCount, (k+1) * totalSectionCount - 1]。
+     *
+     * @param bitmapBytes      整个位图字节数组
+     * @param seatStartBit     该座位在位图中的起始 bit 索引
+     * @param userStartSection 乘客乘车起始区间号（1-based）
+     * @param userEndSection   乘客乘车结束区间号（1-based），对应区间 [start, end] 共 rangeBits 个 bit
+     * @return true=空闲（乘客区间内所有 bit 均为 0）
+     */
+    private boolean isSeatFreeInMemory(byte[] bitmapBytes, long seatStartBit,
+                                       int userStartSection, int userEndSection) {
+        if (bitmapBytes == null || seatStartBit < 0 || userStartSection > userEndSection) {
+            return false;
+        }
+
+        // 1. 计算乘客区间对应的绝对 bit 范围
+        long rangeStartBit = seatStartBit + userStartSection - 1;
+        long rangeEndBit   = seatStartBit + userEndSection - 1;
+        int  rangeBits     = userEndSection - userStartSection + 1;
+
+        int startByte = (int) (rangeStartBit / 8);
+        int endByte   = (int) (rangeEndBit / 8);
+
+        if (endByte >= bitmapBytes.length) return false;
+
+        // 2. 一次读取 1~3 个字节拼成 int
+        int value = 0;
+        for (int i = 0; i <= endByte - startByte; i++) {
+            value |= (bitmapBytes[startByte + i] & 0xFF) << (i * 8);
+        }
+
+        // 3. 构建 mask：rangeBits 个连续的 1，放到 value 内的正确位置
+        int startBitInValue = (int) (rangeStartBit % 8);
+        int mask = ((1 << rangeBits) - 1) << startBitInValue;
+
+        // 4. 一次 AND 完成判断
+        return (value & mask) == 0;
+    }
+
+    // ===================== 订单创建 =====================
 
     @Transactional
     protected void createOrder(LocalDate date, String trainCode, String startStation, String endStation,
@@ -319,19 +356,6 @@ public class TicketBuyServiceImpl implements TicketBuyService {
     }
 
     // ===================== 辅助方法 =====================
-
-    private boolean isSeatFreeInMemory(byte[] bitmapBytes, long seatStartBit,
-                                       int userStartSection, int userEndSection, int totalSectionCount) {
-        if (bitmapBytes == null || seatStartBit < 0 || userStartSection > userEndSection) return false;
-        for (int section = userStartSection; section <= userEndSection; section++) {
-            long bitOffset = seatStartBit + (section - 1);
-            int byteIndex = (int) (bitOffset / 8);
-            int bitInByte = (int) (bitOffset % 8);
-            if (byteIndex >= bitmapBytes.length) return false;
-            if ((bitmapBytes[byteIndex] & (1 << bitInByte)) != 0) return false;
-        }
-        return true;
-    }
 
     private int getCarNumFromCache(TicketListBO trainBO, int seatTypeCode) {
         if (trainBO == null) return 0;
