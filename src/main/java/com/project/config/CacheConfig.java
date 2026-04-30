@@ -2,9 +2,10 @@ package com.project.config;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.project.cache.warmup.TicketStockCalculator;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.caffeine.CaffeineCacheManager;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -12,11 +13,12 @@ import java.time.LocalDate;
 import java.util.concurrent.TimeUnit;
 
 @Configuration
-@RequiredArgsConstructor
 //@EnableCaching // 开启缓存注解（可选，这里直接用CacheManager操作）
 public class CacheConfig {
 
-    private final TicketStockCalculator ticketStockCalculator;
+    @Autowired
+    @Lazy
+    private TicketStockCalculator ticketStockCalculator;
 
      //配置车次经停站缓存管理器，程序启动时加载，程序关闭时自动销毁
     @Bean("trainStopCacheManager") // 指定bean名称，和预热类注入的名称对应
