@@ -5,6 +5,7 @@ import com.google.common.util.concurrent.RateLimiter;
 import com.project.ticket.mapper.TrainStopoverMapper;
 import com.project.ticket.mapper.TrainTicketSectionMapper;
 import com.project.ticket.pojo.bo.TicketListBO;
+import com.project.ticket.pojo.enums.SeatType;
 import com.project.ticket.pojo.dto.TicketListDTO;
 import com.project.ticket.pojo.entity.TrainStopover;
 import com.project.ticket.pojo.vo.TicketListVO;
@@ -28,13 +29,6 @@ import java.util.stream.Collectors;
 public class TicketGetServiceImpl implements TicketGetService {
 
     // ===== 基础配置 =====
-    private static final double BUSINESS_SEAT_PRICE_PER_MILE = 1.5;  // 商务座单价
-    private static final double FIRST_SEAT_PRICE_PER_MILE = 1.2;     // 一等座单价
-    private static final double SECOND_SEAT_PRICE_PER_MILE = 0.8;    // 二等座单价
-    // 座位类型常量（对应JVM缓存Key）
-    private static final String SEAT_TYPE_BUSINESS = "business";
-    private static final String SEAT_TYPE_FIRST = "firstClass";
-    private static final String SEAT_TYPE_SECOND = "secondClass";
     // 库存状态常量
     private static final int STOCK_STATUS_SUFFICIENT = 2; // 高库存
     private static final int STOCK_STATUS_LOW = 1;         // 低库存
@@ -130,9 +124,9 @@ public class TicketGetServiceImpl implements TicketGetService {
             if (trainBO != null && stationBizInfo != null) {
                 // 动态计算票价（里程差×单价，保留2位小数）
                 double mileageDiff = stationBizInfo.getEndMileage() - stationBizInfo.getStartMileage();
-                businessPrice = roundPrice(mileageDiff * BUSINESS_SEAT_PRICE_PER_MILE);
-                firstClassPrice = roundPrice(mileageDiff * FIRST_SEAT_PRICE_PER_MILE);
-                secondClassPrice = roundPrice(mileageDiff * SECOND_SEAT_PRICE_PER_MILE);
+                businessPrice = roundPrice(mileageDiff * SeatType.BUSINESS.getPricePerMile());
+                firstClassPrice = roundPrice(mileageDiff * SeatType.FIRST.getPricePerMile());
+                secondClassPrice = roundPrice(mileageDiff * SeatType.SECOND.getPricePerMile());
                 startTime = stationBizInfo.getStartOutTime();
                 endTime = stationBizInfo.getEndInTime();
             }
@@ -182,9 +176,9 @@ public class TicketGetServiceImpl implements TicketGetService {
         }
 
         // 计算3种座位类型的库存
-        int businessNum = calculateSeatStockFromJvm(trainBO, SEAT_TYPE_BUSINESS, startSection, endSection);
-        int firstClassNum = calculateSeatStockFromJvm(trainBO, SEAT_TYPE_FIRST, startSection, endSection);
-        int secondClassNum = calculateSeatStockFromJvm(trainBO, SEAT_TYPE_SECOND, startSection, endSection);
+        int businessNum = calculateSeatStockFromJvm(trainBO, SeatType.BUSINESS.getCacheKey(), startSection, endSection);
+        int firstClassNum = calculateSeatStockFromJvm(trainBO, SeatType.FIRST.getCacheKey(), startSection, endSection);
+        int secondClassNum = calculateSeatStockFromJvm(trainBO, SeatType.SECOND.getCacheKey(), startSection, endSection);
 
         return StockInfo.builder()
                 .businessNum(businessNum)
@@ -386,7 +380,9 @@ public class TicketGetServiceImpl implements TicketGetService {
      */
     private Map<String, TicketListBO.IntervalStockStatus> initIntervalStockMap(int sectionCount) {
         Map<String, TicketListBO.IntervalStockStatus> stockMap = new HashMap<>();
-        List<String> seatTypes = Arrays.asList(SEAT_TYPE_BUSINESS, SEAT_TYPE_FIRST, SEAT_TYPE_SECOND);
+        List<String> seatTypes = Arrays.stream(SeatType.values())
+                .map(SeatType::getCacheKey)
+                .collect(Collectors.toList());
 
         for (String seatType : seatTypes) {
             for (int section = 1; section <= sectionCount; section++) {

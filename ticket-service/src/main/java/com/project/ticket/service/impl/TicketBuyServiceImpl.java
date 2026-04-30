@@ -14,6 +14,7 @@ import com.project.ticket.pojo.dto.TicketBuyDTO;
 // import com.project.common.pojo.entity.Order;
 // import com.project.common.pojo.entity.OrderPassenger;
 import com.project.ticket.pojo.entity.TrainCarriage;
+import com.project.ticket.pojo.enums.SeatType;
 // TODO: OrderService will be called via HTTP in microservice architecture
 // import com.project.order.service.OrderService;
 import com.project.ticket.service.TicketBuyService;
@@ -468,61 +469,39 @@ public class TicketBuyServiceImpl implements TicketBuyService {
     /**
      * 从JVM缓存的TicketListBO中获取对应座位类型的车厢数量
      */
-    private int getCarNumFromCache(TicketListBO trainBO, int seatType) {
-        if (trainBO == null) {
-            return 0;
-        }
-        return switch (seatType) {
-            case 0 -> Optional.ofNullable(trainBO.getBusinessCarriageInfo())
-                    .map(info -> info.getCarriageIndexes().size())
-                    .orElse(0);
-            case 1 -> Optional.ofNullable(trainBO.getFirstClassCarriageInfo())
-                    .map(info -> info.getCarriageIndexes().size())
-                    .orElse(0);
-            case 2 -> Optional.ofNullable(trainBO.getSecondClassCarriageInfo())
-                    .map(info -> info.getCarriageIndexes().size())
-                    .orElse(0);
-            default -> 0;
+    private int getCarNumFromCache(TicketListBO trainBO, int seatTypeCode) {
+        if (trainBO == null) return 0;
+        SeatType st = SeatType.fromCode(seatTypeCode);
+        return switch (st) {
+            case BUSINESS -> Optional.ofNullable(trainBO.getBusinessCarriageInfo())
+                    .map(info -> info.getCarriageIndexes().size()).orElse(0);
+            case FIRST -> Optional.ofNullable(trainBO.getFirstClassCarriageInfo())
+                    .map(info -> info.getCarriageIndexes().size()).orElse(0);
+            case SECOND -> Optional.ofNullable(trainBO.getSecondClassCarriageInfo())
+                    .map(info -> info.getCarriageIndexes().size()).orElse(0);
         };
     }
 
-    @Deprecated
-    private int getCarNumBySeatType(int seatType, TrainCarriage carriage) {
-        return switch (seatType) {
-            case 0 -> Optional.ofNullable(carriage.getBusinessCarriage()).orElse(0);
-            case 1 -> Optional.ofNullable(carriage.getFirstClassCarriage()).orElse(0);
-            case 2 -> Optional.ofNullable(carriage.getSecondClassCarriage()).orElse(0);
-            default -> 0;
+
+    private List<Integer> getSeatGlobalIndexList(int seatTypeCode) {
+        return switch (SeatType.fromCode(seatTypeCode)) {
+            case BUSINESS -> BUSINESS_SEAT_GLOBAL_INDEX;
+            case FIRST -> FIRST_SEAT_GLOBAL_INDEX;
+            case SECOND -> SECOND_SEAT_GLOBAL_INDEX;
         };
     }
 
-    private List<Integer> getSeatGlobalIndexList(int seatType) {
-        return switch (seatType) {
-            case 0 -> BUSINESS_SEAT_GLOBAL_INDEX;
-            case 1 -> FIRST_SEAT_GLOBAL_INDEX;
-            case 2 -> SECOND_SEAT_GLOBAL_INDEX;
-            default -> Collections.emptyList();
-        };
-    }
-
-    private long calculateSeatStartBit(int carRelativeIndex, int seatGlobalIndex, int totalSectionCount, int seatType) {
-        int seatPerCar = switch (seatType) {
-            case 0 -> 5;    // 商务座每车厢5个
-            case 1 -> 28;   // 一等座每车厢28个
-            case 2 -> 90;   // 二等座每车厢90个
-            default -> 0;
-        };
-        // 核心公式：(车厢序号-1)×每车厢座位数×总区间数 + (座位序号-1)×总区间数
+    private long calculateSeatStartBit(int carRelativeIndex, int seatGlobalIndex, int totalSectionCount, int seatTypeCode) {
+        int seatPerCar = SeatType.fromCode(seatTypeCode).getSeatsPerCarriage();
         return (long) (carRelativeIndex - 1) * seatPerCar * totalSectionCount
                 + (long) (seatGlobalIndex - 1) * totalSectionCount;
     }
 
-    private int convertCarRelativeToAbsolute(int carRelativeIndex, int seatType) {
-        return switch (seatType) {
-            case 0 -> 1;
-            case 1 -> 2;
-            case 2 -> carRelativeIndex + 2;
-            default -> carRelativeIndex;
+    private int convertCarRelativeToAbsolute(int carRelativeIndex, int seatTypeCode) {
+        return switch (SeatType.fromCode(seatTypeCode)) {
+            case BUSINESS -> 1;
+            case FIRST -> 2;
+            case SECOND -> carRelativeIndex + 2;
         };
     }
 

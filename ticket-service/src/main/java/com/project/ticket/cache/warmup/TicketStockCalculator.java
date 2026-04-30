@@ -1,6 +1,7 @@
 package com.project.ticket.cache.warmup;
 
 import com.project.ticket.pojo.bo.TicketListBO;
+import com.project.ticket.pojo.enums.SeatType;
 import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -25,11 +26,6 @@ public class TicketStockCalculator {
 
     private final CacheManager ticketCacheManager;     // 余票15秒小缓存
     private final CacheManager trainStopCacheManager;  // 车站大缓存
-
-    // 暴露为 public 常量，供原 Service 初始化数据使用
-    public static final String SEAT_TYPE_BUSINESS = "business";
-    public static final String SEAT_TYPE_FIRST = "firstClass";
-    public static final String SEAT_TYPE_SECOND = "secondClass";
 
     public static final int STOCK_STATUS_SUFFICIENT = 2; // 高库存
     public static final int STOCK_STATUS_LOW = 1;         // 低库存
@@ -95,9 +91,9 @@ public class TicketStockCalculator {
         }
 
         return StockInfo.builder()
-                .businessNum(calculateSeatStock(trainBO, SEAT_TYPE_BUSINESS, startSection, endSection))
-                .firstClassNum(calculateSeatStock(trainBO, SEAT_TYPE_FIRST, startSection, endSection))
-                .secondClassNum(calculateSeatStock(trainBO, SEAT_TYPE_SECOND, startSection, endSection))
+                .businessNum(calculateSeatStock(trainBO, SeatType.BUSINESS.getCacheKey(), startSection, endSection))
+                .firstClassNum(calculateSeatStock(trainBO, SeatType.FIRST.getCacheKey(), startSection, endSection))
+                .secondClassNum(calculateSeatStock(trainBO, SeatType.SECOND.getCacheKey(), startSection, endSection))
                 .build();
     }
 
