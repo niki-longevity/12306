@@ -7,8 +7,10 @@ import com.project.common.utils.BaseContext;
 import com.project.ticket.handler.builder.TicketValidateChainBuilder;
 import com.project.ticket.handler.chain.AbstractTicketValidateHandler;
 import com.project.ticket.utils.TicketValidateContext;
+import com.project.ticket.mapper.TicketOutboxMapper;
 import com.project.ticket.pojo.bo.TicketListBO;
 import com.project.ticket.pojo.dto.TicketBuyDTO;
+import com.project.ticket.pojo.entity.TicketOutbox;
 import com.project.ticket.pojo.enums.SeatType;
 import com.project.ticket.service.TicketBuyService;
 import lombok.RequiredArgsConstructor;
@@ -21,10 +23,10 @@ import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.util.CollectionUtils;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.*;
@@ -60,7 +62,7 @@ public class TicketBuyServiceImpl implements TicketBuyService {
     private final CacheManager trainStopCacheManager;
     private final ObjectMapper objectMapper;
     private final TicketValidateChainBuilder ticketValidateChainBuilder;
-    private final RestTemplate restTemplate;
+    private final TicketOutboxMapper outboxMapper;
 
     // 本地锁（JVM 内互斥，作为分布式锁的第一道防线）
     private final ConcurrentHashMap<String, ReentrantLock> localLockMap = new ConcurrentHashMap<>();
@@ -258,24 +260,24 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             return Result.error(attempts >= maxAttempts ? "系统繁忙，请重试" : "无可用座位");
         }
 
-        // ===== HTTP 调用 order-service 创建订单 =====
+        // Outbox: 写入本地消息表，由 MQ 消费者异步创建订单
         int finalCarAbsIdx = convertCarRelativeToAbsolute(boughtCarRelIdx, seatTypeCode);
         try {
-            Map<String, Object> orderRequest = new HashMap<>();
-            orderRequest.put("userId", BaseContext.getCurrentId());
-            orderRequest.put("date", date.toString());
-            orderRequest.put("trainCode", trainCode);
-            orderRequest.put("startStation", startStation);
-            orderRequest.put("endStation", endStation);
-            orderRequest.put("seatType", seatTypeCode);
-            orderRequest.put("carriageNum", finalCarAbsIdx);
-            orderRequest.put("seatNum", boughtSeatGlobalIdx);
-            orderRequest.put("startSection", startSection);
-            orderRequest.put("endSection", endSection);
-            orderRequest.put("totalSectionCount", totalSectionCount);
-            orderRequest.put("passengerCount", passengerCount);
-            orderRequest.put("sectionsJson", sectionsJson);
-            orderRequest.put("seatStartBit", calculateSeatStartBit(boughtCarRelIdx, boughtSeatGlobalIdx, totalSectionCount, seatTypeCode));
+            Map<String, Object> orderPayload = new HashMap<>();
+            orderPayload.put("userId", BaseContext.getCurrentId());
+            orderPayload.put("date", date.toString());
+            orderPayload.put("trainCode", trainCode);
+            orderPayload.put("startStation", startStation);
+            orderPayload.put("endStation", endStation);
+            orderPayload.put("seatType", seatTypeCode);
+            orderPayload.put("carriageNum", finalCarAbsIdx);
+            orderPayload.put("seatNum", boughtSeatGlobalIdx);
+            orderPayload.put("startSection", startSection);
+            orderPayload.put("endSection", endSection);
+            orderPayload.put("totalSectionCount", totalSectionCount);
+            orderPayload.put("passengerCount", passengerCount);
+            orderPayload.put("sectionsJson", sectionsJson);
+            orderPayload.put("seatStartBit", calculateSeatStartBit(boughtCarRelIdx, boughtSeatGlobalIdx, totalSectionCount, seatTypeCode));
 
             List<Map<String, String>> passengers = passengerList.stream()
                     .map(p -> {
@@ -283,14 +285,23 @@ public class TicketBuyServiceImpl implements TicketBuyService {
                         pm.put("realName", p.getRealName());
                         pm.put("idCard", p.getIdCard());
                         return pm;
-                    })
-                    .collect(Collectors.toList());
-            orderRequest.put("passengers", passengers);
+                    }).collect(Collectors.toList());
+            orderPayload.put("passengers", passengers);
 
-            restTemplate.postForObject("http://localhost:8083/order/create", orderRequest, String.class);
-            log.info("HTTP创建订单成功：车次{}，车厢{}，座位{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
+            TicketOutbox outbox = TicketOutbox.builder()
+                    .messageType("ORDER_CREATE")
+                    .payload(objectMapper.writeValueAsString(orderPayload))
+                    .status("PENDING")
+                    .retryCount(0)
+                    .createTime(LocalDateTime.now())
+                    .nextRetry(LocalDateTime.now())
+                    .build();
+            outboxMapper.insert(outbox);
+
+            log.info("Outbox消息已写入：outboxId={}, trainCode={}, seat={}/{}",
+                    outbox.getId(), trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
         } catch (Exception e) {
-            log.error("HTTP创建订单失败：车次{}", trainCode, e);
+            log.error("Outbox写入失败：车次{}", trainCode, e);
         }
 
         log.info("购票成功：车次{}，车厢{}，座位{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
