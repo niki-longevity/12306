@@ -1,7 +1,10 @@
 package com.project.ticket.cache.warmup;
 
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.LoadingCache;
 import com.project.ticket.pojo.bo.TicketListBO;
 import com.project.ticket.pojo.enums.SeatType;
+import jakarta.annotation.PostConstruct;
 import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +18,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 车票区间余票 计算与缓存类
@@ -24,8 +28,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class TicketStockCalculator {
 
-    private final CacheManager ticketCacheManager;     // 余票15秒小缓存
     private final CacheManager trainStopCacheManager;  // 车站大缓存
+
+    private LoadingCache<String, StockInfo> ticketCache;
 
     public static final int STOCK_STATUS_SUFFICIENT = 2; // 高库存
     public static final int STOCK_STATUS_LOW = 1;         // 低库存
@@ -48,24 +53,36 @@ public class TicketStockCalculator {
         }
     }
 
+    @PostConstruct
+    public void init() {
+        this.ticketCache = Caffeine.newBuilder()
+                .recordStats()
+                .maximumSize(100000)
+                .refreshAfterWrite(15, TimeUnit.SECONDS)
+                .expireAfterWrite(1, TimeUnit.DAYS)
+                .build(key -> {
+                    // key format: date:startIndex:endIndex:trainCode
+                    String[] parts = key.split(":");
+                    LocalDate date = LocalDate.parse(parts[0]);
+                    int startIndex = Integer.parseInt(parts[1]);
+                    int endIndex = Integer.parseInt(parts[2]);
+                    String trainCode = parts[3];
+                    log.debug("15秒余票缓存未命中或已过期，触发计算，CacheKey: {}", key);
+                    return calculateFromJvm(date, trainCode, startIndex, endIndex);
+                });
+    }
+
     /**
      * 获取区间余票（核心：懒加载缓存模式）
      */
     public StockInfo getSectionStock(LocalDate date, String start, String end, String trainCode, int startIndex, int endIndex) {
-        // Key 加上 trainCode，因为同一路线有多个车次
-        String cacheKey = String.format("%s:%s:%s:%s", date, start, end, trainCode);
-        Cache ticketCache = ticketCacheManager.getCache("ticketCache");
-
-        if (ticketCache == null) {
+        String cacheKey = String.format("%s:%s:%s:%s", date, startIndex, endIndex, trainCode);
+        try {
+            return ticketCache.get(cacheKey);
+        } catch (Exception e) {
+            log.error("Failed to get ticket stock from cache for key={}", cacheKey, e);
             return calculateFromJvm(date, trainCode, startIndex, endIndex);
         }
-
-        // 懒加载：如果 ticketCache 中存在且没过期，直接返回 value
-        // 如果不存在或已过期(15秒)，则执行 Callable 中的逻辑去 trainStopCache 计算并放入 ticketCache
-        return ticketCache.get(cacheKey, () -> {
-            log.debug("15秒余票缓存未命中或已过期，触发计算，CacheKey: {}", cacheKey);
-            return calculateFromJvm(date, trainCode, startIndex, endIndex);
-        });
     }
 
     /**
