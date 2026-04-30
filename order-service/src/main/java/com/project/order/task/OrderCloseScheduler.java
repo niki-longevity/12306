@@ -2,6 +2,7 @@ package com.project.order.task;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.project.order.mapper.OrderMapper;
+import com.project.order.mapper.SeatBitmapMapper;
 import com.project.common.pojo.entity.Order;
 import com.project.order.service.OrderService;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,7 @@ public class OrderCloseScheduler {
     private final OrderMapper orderMapper;
     private final OrderService orderService;
     private final StringRedisTemplate stringRedisTemplate;
+    private final SeatBitmapMapper seatBitmapMapper;
 
     private static final DefaultRedisScript<Long> REFUND_LUA_SCRIPT;
     static {
@@ -57,6 +59,12 @@ public class OrderCloseScheduler {
                 Order closed = orderService.closeExpiredOrder(order.getId());
                 if (closed != null) {
                     rollbackRedisSeat(order);
+                    // 同时回滚 MySQL 位图
+                    byte[] clearMask = buildCloseMask(order.getSeatStartBit(),
+                            order.getStartSection(), order.getEndSection(), order.getTotalSectionCount());
+                    seatBitmapMapper.clearBitmap(
+                            order.getTrainCode(), order.getDate(), order.getSeatType(),
+                            order.getCarriageNum(), order.getSeatNum(), clearMask);
                     log.info("定时任务关单+回滚Redis成功：orderId={}", order.getId());
                 }
             } catch (Exception e) {
@@ -85,5 +93,17 @@ public class OrderCloseScheduler {
                 order.getSectionsJson()
         );
         log.info("Redis座位回滚成功：orderId={}, bitmapKey={}", order.getId(), bitmapKey);
+    }
+
+    private byte[] buildCloseMask(long seatStartBit, int startSection, int endSection, int totalSectionCount) {
+        int byteLen = (totalSectionCount + 7) / 8;
+        byte[] mask = new byte[byteLen];
+        for (int s = startSection; s <= endSection; s++) {
+            long bitPos = seatStartBit + s - 1;
+            int byteIdx = (int) (bitPos / 8);
+            int bitIdx = (int) (bitPos % 8);
+            mask[byteIdx] |= (1 << bitIdx);
+        }
+        return mask;
     }
 }
