@@ -43,7 +43,7 @@ import java.util.stream.Collectors;
 public class TicketBuyServiceImpl implements TicketBuyService {
 
     // ===== 基础配置 =====
-    private static final String TOKEN_KEY_PREFIX = "Token:%s:%s";
+    private static final String TOKEN_KEY_PREFIX = "Token:%s:%s:%d";
     private static final String STOCK_KEY_PREFIX = "Stock:%s:%s:%d";
     private static final String BITMAP_KEY_PREFIX = "%s:%s:%d:bitmap";
     private static final String LOCK_KEY_PREFIX = "Lock:%s:%s:%d:%d:%d";
@@ -156,12 +156,11 @@ public class TicketBuyServiceImpl implements TicketBuyService {
         }
 
         // ===== Token 桶限流 =====
-        String tokenKey = String.format(TOKEN_KEY_PREFIX, date, trainCode);
+        String tokenKey = String.format(TOKEN_KEY_PREFIX, date, trainCode, seatTypeCode);
         Long tokenResult = stringRedisTemplate.execute(
                 TOKEN_BUCKET_LUA_SCRIPT,
                 Collections.singletonList(tokenKey),
-                String.valueOf(passengerCount),
-                String.valueOf(Math.max(minStock - 1, 0))
+                String.valueOf(passengerCount)
         );
         if (tokenResult != null && tokenResult < 0) {
             return Result.error("请求频繁，请稍后");
