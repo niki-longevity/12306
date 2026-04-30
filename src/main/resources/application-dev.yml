@@ -1,4 +1,6 @@
 spring:
+  autoconfigure:
+    exclude: org.apache.rocketmq.spring.autoconfigure.RocketMQAutoConfiguration
   data:
     redis:
       host: ${REDIS_HOST:172.22.32.238}
