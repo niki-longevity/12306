@@ -8,8 +8,12 @@ import com.project.utils.TicketValidateContext;
 import com.project.mapper.TrainCarriageMapper;
 import com.project.pojo.bo.TicketListBO;
 import com.project.pojo.dto.TicketBuyDTO;
+import com.project.pojo.entity.Order;
+import com.project.pojo.entity.OrderPassenger;
 import com.project.pojo.entity.TrainCarriage;
+import com.project.service.OrderService;
 import com.project.service.TicketBuyService;
+import com.project.utils.BaseContext;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,6 +56,9 @@ public class TicketBuyServiceImpl implements TicketBuyService {
 
     // 责任链构造器
     private final TicketValidateChainBuilder ticketValidateChainBuilder;
+
+    // 订单服务
+    private final OrderService orderService;
 
     // 本地锁
     private final ConcurrentHashMap<String, ReentrantLock> localLockMap = new ConcurrentHashMap<>();
@@ -294,9 +301,32 @@ public class TicketBuyServiceImpl implements TicketBuyService {
                     finalSeatGlobalIndex = freeSeat.seatGlobalIndex;
                     buySuccess = true;
 
-                    // TODO 发送RocketMQ消息异步下单扣减数据库
+                    // 创建订单（同步落库）
+                    Order order = Order.builder()
+                            .userId(BaseContext.getCurrentId())
+                            .date(date)
+                            .trainCode(trainCode)
+                            .startStation(startStation)
+                            .endStation(endStation)
+                            .seatType(seatType)
+                            .carriageNum(finalCarAbsoluteIndex)
+                            .seatNum(finalSeatGlobalIndex)
+                            .startSection(startSection)
+                            .endSection(endSection)
+                            .totalSectionCount(totalSectionCount)
+                            .passengerCount(passengerCount)
+                            .sectionsJson(sectionsJson)
+                            .seatStartBit(freeSeat.seatStartBit)
+                            .build();
+                    List<OrderPassenger> orderPassengers = passengerList.stream()
+                            .map(p -> OrderPassenger.builder()
+                                    .realName(p.getRealName())
+                                    .idCard(p.getIdCard())
+                                    .build())
+                            .collect(java.util.stream.Collectors.toList());
+                    orderService.create(order, orderPassengers);
 
-                    log.info("购票成功：车次{}，车厢{}，座位{}", trainCode, finalCarAbsoluteIndex, finalSeatGlobalIndex);
+                    log.info("购票成功：车次{}，车厢{}，座位{}，订单号{}", trainCode, finalCarAbsoluteIndex, finalSeatGlobalIndex, order.getId());
                     break;
                 }
                 if (luaResult == 0) {
