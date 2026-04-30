@@ -202,5 +202,73 @@ SELECT COUNT(*) FROM seat_bitmap WHERE ...
 | 位图真相源 | MySQL `seat_bitmap` 表 | 持久化保证，写前 WAL |
 | 快速路径 | Redis BITFIELD | 99.99% 请求在这里完成，性能不降 |
 | 冲突处理 | 增量修复，不清退合法已售 | 只回滚购买失败的区间 |
-| MQ 投递 | outbox 表 + 定时扫描 | 消息不丢 |
+| MQ 投递 | outbox 表 + 定时扫描 → 可选升级 Canal | 消息不丢 |
 | 对账 | 不做全量对账 | 只在 Redis 重启/冲突时触发修复 |
+| Canal | 第二阶段升级路径 | 应用只写 outbox，投递交由 binlog 驱动 |
+
+---
+
+## 7. Canal 优化路径（第二阶段）
+
+### 7.1 为什么需要 Canal
+
+当前方案：`INSERT outbox → 立即发 MQ → 失败则定时扫 PENDING`。应用既要写表又要发消息，耦合了一个"发消息"的操作。
+
+Canal 方案：**应用只写 `ticket_outbox` 表，消息投递由 Canal 监听 binlog 完成。**
+
+```
+主流程:  Lua成功 → INSERT ticket_outbox → COMMIT → 返回"排队中"
+                ↑ 应用职责到此为止
+                
+Canal:   binlog(INSERT outbox) → Canal解析 → 同步发送RocketMQ
+           │
+           ├── 成功 → ACK binlog offset
+           └── 失败 → 不推进 offset, 重试到成功
+```
+
+### 7.2 可靠性保证
+
+| 环节 | 机制 | 保证级别 |
+|------|------|---------|
+| MySQL binlog | 事务 COMMIT = binlog 落盘 | 100% |
+| Canal 读取 | 模拟从库，offset 安全落盘后推进 | 100% |
+| MQ 投递 | 同步发送，失败不推进 offset | at-least-once |
+| 消息重复 | 消费者 `order_id` 去重 | 幂等 |
+
+**Canal 投递比应用发 MQ 更可靠**——应用发消息如果进程挂了，消息丢了；Canal 的 offset 在中间件层面管理，重启后从 binlog 精确续传。
+
+### 7.3 两条消息如何投递
+
+`ticket_outbox` 中存两条记录，`message_type` 区分：
+
+| 消息 | message_type | 投递时机 |
+|------|-------------|---------|
+| 创建订单 | ORDER_CREATE | 立即（Canal 看到 INSERT 就发） |
+| 延时关单 | ORDER_CLOSE | 需要延时 30min 投递 |
+
+**ORDER_CREATE**：Canal 直接发到 `order-create-topic`。
+
+**ORDER_CLOSE**：Canal 不能实现延时投递。两种方案：
+- Canal 发到 `order-close-topic`，消费者收到后 `Thread.sleep(30min)` 再处理（浪费线程）
+- **应用在 INSERT 时直接发一条 RocketMQ 延时消息**（delayLevel=16），这一条不需要 Canal
+
+### 7.4 主流程精简对比
+
+```
+当前 outbox 方案:
+  Lua → INSERT outbox → 发MQ(重试) → 失败则定时扫 → 返回
+
+Canal 方案:
+  Lua → INSERT outbox → 返回    ← 发 MQ 完全由 Canal 接管
+         (ORDER_CLOSE 仍由应用发延时消息)
+```
+
+**应用不再需要定时扫 PENDING 的兜底任务**，那个逻辑移到 Canal connector 的重试机制里。
+
+### 7.5 实施顺序
+
+| 阶段 | 内容 |
+|------|------|
+| 第一阶段（现在） | outbox 表 + 定时扫描兜底 |
+| 第二阶段（后续） | 部署 Canal，去掉定时扫描，投递由 binlog 驱动 |
+
