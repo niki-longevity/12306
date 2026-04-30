@@ -1,0 +1,34 @@
+package com.project.ticket.pojo.entity;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.io.Serial;
+import java.io.Serializable;
+import java.time.LocalDate;
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class TrainTicket implements Serializable {
+    @Serial
+    private static final long serialVersionUID = 1L;
+
+    private Long id;
+
+    private LocalDate date;
+
+    private String code;
+
+    // 商务座余票
+    private Integer businessSeat;
+
+    // 一等座余票
+    private Integer firstSeat;
+
+    // 二等座余票
+    private Integer secondSeat;
+}
