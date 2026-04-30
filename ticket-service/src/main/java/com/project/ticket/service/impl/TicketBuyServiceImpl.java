@@ -2,15 +2,11 @@ package com.project.ticket.service.impl;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.project.common.pojo.entity.Order;
-import com.project.common.pojo.entity.OrderPassenger;
 import com.project.common.result.Result;
 import com.project.common.utils.BaseContext;
 import com.project.ticket.handler.builder.TicketValidateChainBuilder;
 import com.project.ticket.handler.chain.AbstractTicketValidateHandler;
 import com.project.ticket.utils.TicketValidateContext;
-import com.project.ticket.mapper.OrderMapper;
-import com.project.ticket.mapper.OrderPassengerMapper;
 import com.project.ticket.pojo.bo.TicketListBO;
 import com.project.ticket.pojo.dto.TicketBuyDTO;
 import com.project.ticket.pojo.enums.SeatType;
@@ -25,11 +21,12 @@ import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.util.CollectionUtils;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
@@ -63,8 +60,7 @@ public class TicketBuyServiceImpl implements TicketBuyService {
     private final CacheManager trainStopCacheManager;
     private final ObjectMapper objectMapper;
     private final TicketValidateChainBuilder ticketValidateChainBuilder;
-    private final OrderMapper orderMapper;
-    private final OrderPassengerMapper orderPassengerMapper;
+    private final RestTemplate restTemplate;
 
     // 本地锁（JVM 内互斥，作为分布式锁的第一道防线）
     private final ConcurrentHashMap<String, ReentrantLock> localLockMap = new ConcurrentHashMap<>();
@@ -262,15 +258,39 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             return Result.error(attempts >= maxAttempts ? "系统繁忙，请重试" : "无可用座位");
         }
 
-        // ===== 订单落库 =====
+        // ===== HTTP 调用 order-service 创建订单 =====
         int finalCarAbsIdx = convertCarRelativeToAbsolute(boughtCarRelIdx, seatTypeCode);
         try {
-            createOrder(date, trainCode, startStation, endStation, seatTypeCode,
-                    finalCarAbsIdx, boughtSeatGlobalIdx, startSection, endSection,
-                    totalSectionCount, passengerCount, sectionsJson, seatTypeCode,
-                    passengerList, boughtCarRelIdx, seatGlobalIndexList);
+            Map<String, Object> orderRequest = new HashMap<>();
+            orderRequest.put("userId", BaseContext.getCurrentId());
+            orderRequest.put("date", date.toString());
+            orderRequest.put("trainCode", trainCode);
+            orderRequest.put("startStation", startStation);
+            orderRequest.put("endStation", endStation);
+            orderRequest.put("seatType", seatTypeCode);
+            orderRequest.put("carriageNum", finalCarAbsIdx);
+            orderRequest.put("seatNum", boughtSeatGlobalIdx);
+            orderRequest.put("startSection", startSection);
+            orderRequest.put("endSection", endSection);
+            orderRequest.put("totalSectionCount", totalSectionCount);
+            orderRequest.put("passengerCount", passengerCount);
+            orderRequest.put("sectionsJson", sectionsJson);
+            orderRequest.put("seatStartBit", calculateSeatStartBit(boughtCarRelIdx, boughtSeatGlobalIdx, totalSectionCount, seatTypeCode));
+
+            List<Map<String, String>> passengers = passengerList.stream()
+                    .map(p -> {
+                        Map<String, String> pm = new HashMap<>();
+                        pm.put("realName", p.getRealName());
+                        pm.put("idCard", p.getIdCard());
+                        return pm;
+                    })
+                    .collect(Collectors.toList());
+            orderRequest.put("passengers", passengers);
+
+            restTemplate.postForObject("http://localhost:8083/order/create", orderRequest, String.class);
+            log.info("HTTP创建订单成功：车次{}，车厢{}，座位{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
         } catch (Exception e) {
-            log.error("订单创建失败：车次{}，座位{}/{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx, e);
+            log.error("HTTP创建订单失败：车次{}", trainCode, e);
         }
 
         log.info("购票成功：车次{}，车厢{}，座位{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
@@ -318,40 +338,6 @@ public class TicketBuyServiceImpl implements TicketBuyService {
 
         // 4. 一次 AND 完成判断
         return (value & mask) == 0;
-    }
-
-    // ===================== 订单创建 =====================
-
-    @Transactional
-    protected void createOrder(LocalDate date, String trainCode, String startStation, String endStation,
-                               int seatTypeCode, int carriageNum, int seatNum,
-                               int startSection, int endSection, int totalSectionCount,
-                               int passengerCount, String sectionsJson, int seatStartBitCode,
-                               List<TicketBuyDTO.Passenger> passengerList,
-                               int carRelativeIndex, List<Integer> seatGlobalIndexList) {
-        Order order = Order.builder()
-                .userId(BaseContext.getCurrentId())
-                .date(date).trainCode(trainCode)
-                .startStation(startStation).endStation(endStation)
-                .seatType(seatTypeCode).carriageNum(carriageNum).seatNum(seatNum)
-                .startSection(startSection).endSection(endSection)
-                .totalSectionCount(totalSectionCount).passengerCount(passengerCount)
-                .sectionsJson(sectionsJson)
-                .seatStartBit(calculateSeatStartBit(carRelativeIndex, seatNum, totalSectionCount, seatTypeCode))
-                .status("UNPAID")
-                .expireTime(LocalDateTime.now().plusMinutes(30))
-                .createTime(LocalDateTime.now())
-                .updateTime(LocalDateTime.now())
-                .build();
-        orderMapper.insert(order);
-
-        for (TicketBuyDTO.Passenger p : passengerList) {
-            OrderPassenger op = OrderPassenger.builder()
-                    .orderId(order.getId()).realName(p.getRealName()).idCard(p.getIdCard())
-                    .build();
-            orderPassengerMapper.insert(op);
-        }
-        log.info("订单创建成功：orderId={}, trainCode={}", order.getId(), trainCode);
     }
 
     // ===================== 辅助方法 =====================
