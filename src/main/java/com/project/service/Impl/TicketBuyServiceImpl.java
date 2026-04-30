@@ -61,8 +61,9 @@ public class TicketBuyServiceImpl implements TicketBuyService {
     // 订单服务
     private final OrderService orderService;
 
-    // RocketMQ 延时消息
-    private final RocketMQTemplate rocketMQTemplate;
+    // RocketMQ 延时消息（测试环境可能不可用）
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private RocketMQTemplate rocketMQTemplate;
 
     // 本地锁
     private final ConcurrentHashMap<String, ReentrantLock> localLockMap = new ConcurrentHashMap<>();
@@ -331,14 +332,16 @@ public class TicketBuyServiceImpl implements TicketBuyService {
                     orderService.create(order, orderPassengers);
 
                     // 发送延时关单消息（delayLevel=16 → 30分钟）
-                    try {
-                        org.springframework.messaging.Message<String> msg = org.springframework.messaging.support.MessageBuilder
-                                .withPayload(String.valueOf(order.getId()))
-                                .build();
-                        rocketMQTemplate.syncSend("order-close-topic", msg, 3000, 16);
-                    } catch (Exception e) {
-                        log.error("发送延时关单消息失败：orderId={}", order.getId(), e);
-                        // 不阻塞购票流程，定时任务会兜底
+                    if (rocketMQTemplate != null) {
+                        try {
+                            org.springframework.messaging.Message<String> msg = org.springframework.messaging.support.MessageBuilder
+                                    .withPayload(String.valueOf(order.getId()))
+                                    .build();
+                            rocketMQTemplate.syncSend("order-close-topic", msg, 3000, 16);
+                        } catch (Exception e) {
+                            log.error("发送延时关单消息失败：orderId={}", order.getId(), e);
+                            // 不阻塞购票流程，定时任务会兜底
+                        }
                     }
 
                     log.info("购票成功：车次{}，车厢{}，座位{}，订单号{}", trainCode, finalCarAbsoluteIndex, finalSeatGlobalIndex, order.getId());
