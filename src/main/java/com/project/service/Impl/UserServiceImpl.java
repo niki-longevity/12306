@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBloomFilter;
 import org.springframework.beans.BeanUtils;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -31,6 +32,7 @@ public class UserServiceImpl implements UserService {
     private final UserMapper userMapper;
     private final RBloomFilter<String> usernameBloomFilter;
     private final UsernamePhoneMapper usernamePhoneMapper;
+    private final PasswordEncoder passwordEncoder;
 
     /**
      * 登录
@@ -69,13 +71,8 @@ public class UserServiceImpl implements UserService {
             // 如果没有定义细分异常，直接用 throw new BaseException("账号不存在");
         }
 
-        // 4. 校验密码
-        String password = userLoginDTO.getPassword();
-        // 做简单的MD5
-        // String md5Password = DigestUtils.md5DigestAsHex(password.getBytes());
-
-        // 如果你是明文存储（不推荐），直接比对：
-        if (!password.equals(user.getPassword())) {
+        // 4. 校验密码（BCrypt）
+        if (!passwordEncoder.matches(userLoginDTO.getPassword(), user.getPassword())) {
             throw new PasswordErrorException("手机号或密码错误");
         }
 
@@ -106,10 +103,9 @@ public class UserServiceImpl implements UserService {
 
         User user = new User();
         BeanUtils.copyProperties(userRegisterDTO, user);
+        // BCrypt 加密密码
+        user.setPassword(passwordEncoder.encode(userRegisterDTO.getPassword()));
         user.setCreateTime(LocalDateTime.now());
-
-        // 做简单的MD5加密
-        // String md5Password = DigestUtils.md5DigestAsHex(password.getBytes());
 
         // 插入数据库
         userMapper.insert(user);
