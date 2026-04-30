@@ -4,15 +4,21 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.project.order.mapper.OrderMapper;
 import com.project.order.mapper.OrderPassengerMapper;
+import com.project.order.mapper.SeatBitmapMapper;
 import com.project.common.pojo.entity.Order;
 import com.project.common.pojo.entity.OrderPassenger;
+import com.project.common.pojo.entity.SeatBitmap;
 import com.project.order.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @Slf4j
@@ -22,10 +28,46 @@ public class OrderServiceImpl implements OrderService {
 
     private final OrderMapper orderMapper;
     private final OrderPassengerMapper orderPassengerMapper;
+    private final SeatBitmapMapper seatBitmapMapper;
+    private final StringRedisTemplate stringRedisTemplate;
+
+    private static final DefaultRedisScript<Long> CONFLICT_FIX_LUA;
+    static {
+        CONFLICT_FIX_LUA = new DefaultRedisScript<>();
+        CONFLICT_FIX_LUA.setLocation(new org.springframework.core.io.ClassPathResource("lua/ticket_conflict_fix.lua"));
+        CONFLICT_FIX_LUA.setResultType(Long.class);
+    }
 
     @Override
     @Transactional
     public Order create(Order order, List<OrderPassenger> passengers) {
+        byte[] mask = buildSectionMask(order.getSeatStartBit(),
+                order.getStartSection(), order.getEndSection(), order.getTotalSectionCount());
+
+        int updated = seatBitmapMapper.updateBitmapIfNoConflict(
+                order.getTrainCode(), order.getDate(), order.getSeatType(),
+                order.getCarriageNum(), order.getSeatNum(), mask);
+
+        if (updated == 0) {
+            log.warn("Bitmap conflict: train={}, seat={}/{} sect={}-{}",
+                    order.getTrainCode(), order.getCarriageNum(), order.getSeatNum(),
+                    order.getStartSection(), order.getEndSection());
+
+            SeatBitmap current = seatBitmapMapper.selectOne(
+                    new LambdaQueryWrapper<SeatBitmap>()
+                            .eq(SeatBitmap::getTrainCode, order.getTrainCode())
+                            .eq(SeatBitmap::getDate, order.getDate())
+                            .eq(SeatBitmap::getSeatType, order.getSeatType())
+                            .eq(SeatBitmap::getCarriageNum, order.getCarriageNum())
+                            .eq(SeatBitmap::getSeatNum, order.getSeatNum())
+                            .last("LIMIT 1"));
+
+            if (current != null && current.getBitmap() != null) {
+                repairRedisAfterConflict(order, current.getBitmap(), mask);
+            }
+            throw new RuntimeException("座位冲突，请重试");
+        }
+
         order.setStatus("UNPAID");
         order.setExpireTime(LocalDateTime.now().plusMinutes(30));
         order.setCreateTime(LocalDateTime.now());
@@ -36,9 +78,7 @@ public class OrderServiceImpl implements OrderService {
             p.setOrderId(order.getId());
             orderPassengerMapper.insert(p);
         });
-
-        log.info("订单创建成功：orderId={}, trainCode={}, expireTime={}",
-                order.getId(), order.getTrainCode(), order.getExpireTime());
+        log.info("订单创建成功：orderId={}, trainCode={}", order.getId(), order.getTrainCode());
         return order;
     }
 
@@ -101,5 +141,66 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public Order findById(Long orderId) {
         return orderMapper.selectById(orderId);
+    }
+
+    /**
+     * 构建区间位图掩码。mask 的 bit (section-1) 位置为 1。
+     */
+    private byte[] buildSectionMask(long seatStartBit, int startSection, int endSection, int totalSectionCount) {
+        int byteLen = (totalSectionCount + 7) / 8;
+        byte[] mask = new byte[byteLen];
+        for (int s = startSection; s <= endSection; s++) {
+            long bitPos = seatStartBit + s - 1;
+            int byteIdx = (int) (bitPos / 8);
+            int bitIdx = (int) (bitPos % 8);
+            mask[byteIdx] |= (1 << bitIdx);
+        }
+        return mask;
+    }
+
+    /**
+     * Redis 冲突修复：清零干净区间 + 标记脏区间 + 修正库存和令牌
+     */
+    private void repairRedisAfterConflict(Order order, byte[] mysqlBitmap, byte[] userMask) {
+        long seatStartBit = order.getSeatStartBit();
+        int userStart = order.getStartSection();
+        int userEnd = order.getEndSection();
+        int totalSectionCount = order.getTotalSectionCount();
+
+        List<Integer> cleanSections = new ArrayList<>();
+        List<Integer> dirtySections = new ArrayList<>();
+
+        for (int s = userStart; s <= userEnd; s++) {
+            long bitPos = seatStartBit + s - 1;
+            int byteIdx = (int) (bitPos / 8);
+            int bitIdx = (int) (bitPos % 8);
+
+            boolean userWants = byteIdx < userMask.length && (userMask[byteIdx] & (1 << bitIdx)) != 0;
+            boolean mysqlHas  = byteIdx < mysqlBitmap.length && (mysqlBitmap[byteIdx] & (1 << bitIdx)) != 0;
+
+            if (userWants && mysqlHas) {
+                dirtySections.add(s);   // Redis 丢失了这段已售数据
+            } else if (userWants && !mysqlHas) {
+                cleanSections.add(s);    // 用户想买但需要回滚的
+            }
+        }
+
+        log.warn("Conflict repair: cleanSections={}, dirtySections={}", cleanSections, dirtySections);
+
+        String bitmapKey = String.format("%s:%s:%d:bitmap", order.getDate(), order.getTrainCode(), order.getSeatType());
+        String stockKey = String.format("Stock:%s:%s:%d", order.getDate(), order.getTrainCode(), order.getSeatType());
+        String tokenKey = String.format("Token:%s:%s:%d", order.getDate(), order.getTrainCode(), order.getSeatType());
+
+        int tokenDelta = cleanSections.size() - dirtySections.size();
+
+        stringRedisTemplate.execute(CONFLICT_FIX_LUA,
+                Arrays.asList(bitmapKey, stockKey, tokenKey),
+                String.valueOf(seatStartBit),
+                String.valueOf(totalSectionCount),
+                cleanSections.toString(),
+                dirtySections.toString(),
+                String.valueOf(order.getPassengerCount()),
+                cleanSections.toString()
+        );
     }
 }
