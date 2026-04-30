@@ -1,7 +1,6 @@
 package com.project.ticket.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.google.common.util.concurrent.RateLimiter;
 import com.project.ticket.mapper.TrainStopoverMapper;
 import com.project.ticket.mapper.TrainTicketSectionMapper;
 import com.project.ticket.pojo.bo.TicketListBO;
@@ -35,7 +34,6 @@ public class TicketGetServiceImpl implements TicketGetService {
     private static final int STOCK_STATUS_NONE = 0;        // 无票
     private static final int SUFFICIENT_STOCK_VALUE = 11;  // 高库存默认返回值
     // 数据库限流：每秒最多20次查询（可根据数据库性能调整）
-    private final RateLimiter dbRateLimiter = RateLimiter.create(20);
 
     // ===== 依赖注入 =====
     private final StringRedisTemplate stringRedisTemplate;
@@ -307,10 +305,6 @@ public class TicketGetServiceImpl implements TicketGetService {
      */
     private Map<String, TicketListBO> getTrainBoFromDbWithLimit(LocalDate date, List<String> trainCodes) {
         Map<String, TicketListBO> resultMap = new HashMap<>();
-        if (!dbRateLimiter.tryAcquire(100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-            log.error("数据库限流触发，拒绝查询车次：{}", trainCodes);
-            return resultMap;
-        }
 
         try {
             LambdaQueryWrapper<TrainStopover> queryWrapper = new LambdaQueryWrapper<TrainStopover>()
