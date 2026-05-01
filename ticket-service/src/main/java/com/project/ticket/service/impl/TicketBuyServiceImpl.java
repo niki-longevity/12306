@@ -7,10 +7,8 @@ import com.project.common.utils.BaseContext;
 import com.project.ticket.handler.builder.TicketValidateChainBuilder;
 import com.project.ticket.handler.chain.AbstractTicketValidateHandler;
 import com.project.ticket.utils.TicketValidateContext;
-import com.project.ticket.mapper.TicketOutboxMapper;
 import com.project.ticket.pojo.bo.TicketListBO;
 import com.project.ticket.pojo.dto.TicketBuyDTO;
-import com.project.ticket.pojo.entity.TicketOutbox;
 import com.project.ticket.pojo.enums.SeatType;
 import com.project.ticket.service.TicketBuyService;
 import lombok.RequiredArgsConstructor;
@@ -25,8 +23,10 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
+import org.springframework.messaging.support.MessageBuilder;
+
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.*;
@@ -62,7 +62,7 @@ public class TicketBuyServiceImpl implements TicketBuyService {
     private final CacheManager trainStopCacheManager;
     private final ObjectMapper objectMapper;
     private final TicketValidateChainBuilder ticketValidateChainBuilder;
-    private final TicketOutboxMapper outboxMapper;
+    private final RocketMQTemplate rocketMQTemplate;
 
     // 本地锁（JVM 内互斥，作为分布式锁的第一道防线）
     private final ConcurrentHashMap<String, ReentrantLock> localLockMap = new ConcurrentHashMap<>();
@@ -260,8 +260,9 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             return Result.error(attempts >= maxAttempts ? "系统繁忙，请重试" : "无可用座位");
         }
 
-        // Outbox: 写入本地消息表，由 MQ 消费者异步创建订单
+        // 事务消息: ORDER_CREATE + 延时: ORDER_CLOSE
         int finalCarAbsIdx = convertCarRelativeToAbsolute(boughtCarRelIdx, seatTypeCode);
+        long seatStartBitVal = calculateSeatStartBit(boughtCarRelIdx, boughtSeatGlobalIdx, totalSectionCount, seatTypeCode);
         try {
             Map<String, Object> orderPayload = new HashMap<>();
             orderPayload.put("userId", BaseContext.getCurrentId());
@@ -277,31 +278,25 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             orderPayload.put("totalSectionCount", totalSectionCount);
             orderPayload.put("passengerCount", passengerCount);
             orderPayload.put("sectionsJson", sectionsJson);
-            orderPayload.put("seatStartBit", calculateSeatStartBit(boughtCarRelIdx, boughtSeatGlobalIdx, totalSectionCount, seatTypeCode));
+            orderPayload.put("seatStartBit", seatStartBitVal);
 
             List<Map<String, String>> passengers = passengerList.stream()
-                    .map(p -> {
-                        Map<String, String> pm = new HashMap<>();
-                        pm.put("realName", p.getRealName());
-                        pm.put("idCard", p.getIdCard());
-                        return pm;
-                    }).collect(Collectors.toList());
+                    .map(p -> { Map<String, String> m = new HashMap<>(); m.put("realName",p.getRealName()); m.put("idCard",p.getIdCard()); return m; })
+                    .collect(Collectors.toList());
             orderPayload.put("passengers", passengers);
+            String payloadJson = objectMapper.writeValueAsString(orderPayload);
 
-            TicketOutbox outbox = TicketOutbox.builder()
-                    .messageType("ORDER_CREATE")
-                    .payload(objectMapper.writeValueAsString(orderPayload))
-                    .status("PENDING")
-                    .retryCount(0)
-                    .createTime(LocalDateTime.now())
-                    .nextRetry(LocalDateTime.now())
-                    .build();
-            outboxMapper.insert(outbox);
+            // ORDER_CREATE: 事务消息 (RocketMQ 半消息保证一致性)
+            var msg = MessageBuilder.withPayload(payloadJson).build();
+            rocketMQTemplate.sendMessageInTransaction("order-create-topic", msg, null);
 
-            log.info("Outbox消息已写入：outboxId={}, trainCode={}, seat={}/{}",
-                    outbox.getId(), trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
+            // ORDER_CLOSE: 延时消息 (delayLevel=16 → ~30min)
+            var closeMsg = MessageBuilder.withPayload(payloadJson).build();
+            rocketMQTemplate.syncSend("order-close-topic", closeMsg, 3000, 16);
+
         } catch (Exception e) {
-            log.error("Outbox写入失败：车次{}", trainCode, e);
+            log.error("MQ发送失败：车次{}", trainCode, e);
+            // 分布式事务回查会处理不一致
         }
 
         log.info("购票成功：车次{}，车厢{}，座位{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
