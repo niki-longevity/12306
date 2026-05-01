@@ -99,9 +99,9 @@ public class OrderCloseScheduler {
         int byteLen = (totalSectionCount + 7) / 8;
         byte[] mask = new byte[byteLen];
         for (int s = startSection; s <= endSection; s++) {
-            long bitPos = seatStartBit + s - 1;
-            int byteIdx = (int) (bitPos / 8);
-            int bitIdx = (int) (bitPos % 8);
+            int bitPos = s - 1;  // 座位内相对偏移
+            int byteIdx = bitPos / 8;
+            int bitIdx = bitPos % 8;
             mask[byteIdx] |= (1 << bitIdx);
         }
         return mask;

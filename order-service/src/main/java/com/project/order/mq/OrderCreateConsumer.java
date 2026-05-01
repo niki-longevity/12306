@@ -19,7 +19,7 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "rocketmq.name-server")
-@RocketMQMessageListener(topic = "order-create-topic", consumerGroup = "order-create-consumer-group")
+@RocketMQMessageListener(topic = "order-create-topic", consumerGroup = "order-create-consumer-group-v2")
 public class OrderCreateConsumer implements RocketMQListener<String> {
 
     private final OrderService orderService;
@@ -30,8 +30,13 @@ public class OrderCreateConsumer implements RocketMQListener<String> {
     public void onMessage(String message) {
         try {
             Map<String, Object> payload = objectMapper.readValue(message, Map.class);
+            Object userIdObj = payload.get("userId");
+            if (userIdObj == null) {
+                log.warn("OrderCreateConsumer: userId is null, skip message");
+                return;
+            }
             Order order = Order.builder()
-                    .userId(Long.valueOf(payload.get("userId").toString()))
+                    .userId(Long.valueOf(userIdObj.toString()))
                     .date(LocalDate.parse(payload.get("date").toString()))
                     .trainCode(payload.get("trainCode").toString())
                     .startStation(payload.get("startStation").toString())

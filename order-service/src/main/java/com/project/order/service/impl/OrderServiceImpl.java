@@ -44,7 +44,8 @@ public class OrderServiceImpl implements OrderService {
         byte[] mask = buildSectionMask(order.getSeatStartBit(),
                 order.getStartSection(), order.getEndSection(), order.getTotalSectionCount());
 
-        int updated = seatBitmapMapper.updateBitmapIfNoConflict(
+        long snowflakeId = order.getDate().toEpochDay() * 1000000L + order.getCarriageNum() * 1000L + order.getSeatNum();
+        int updated = seatBitmapMapper.upsertBitmap(snowflakeId,
                 order.getTrainCode(), order.getDate(), order.getSeatType(),
                 order.getCarriageNum(), order.getSeatNum(), mask);
 
@@ -150,9 +151,9 @@ public class OrderServiceImpl implements OrderService {
         int byteLen = (totalSectionCount + 7) / 8;
         byte[] mask = new byte[byteLen];
         for (int s = startSection; s <= endSection; s++) {
-            long bitPos = seatStartBit + s - 1;
-            int byteIdx = (int) (bitPos / 8);
-            int bitIdx = (int) (bitPos % 8);
+            int bitPos = s - 1;  // 座位内相对偏移，s从1开始
+            int byteIdx = bitPos / 8;
+            int bitIdx = bitPos % 8;
             mask[byteIdx] |= (1 << bitIdx);
         }
         return mask;
@@ -171,9 +172,9 @@ public class OrderServiceImpl implements OrderService {
         List<Integer> dirtySections = new ArrayList<>();
 
         for (int s = userStart; s <= userEnd; s++) {
-            long bitPos = seatStartBit + s - 1;
-            int byteIdx = (int) (bitPos / 8);
-            int bitIdx = (int) (bitPos % 8);
+            int bitPos = s - 1;  // 座位内相对偏移
+            int byteIdx = bitPos / 8;
+            int bitIdx = bitPos % 8;
 
             boolean userWants = byteIdx < userMask.length && (userMask[byteIdx] & (1 << bitIdx)) != 0;
             boolean mysqlHas  = byteIdx < mysqlBitmap.length && (mysqlBitmap[byteIdx] & (1 << bitIdx)) != 0;

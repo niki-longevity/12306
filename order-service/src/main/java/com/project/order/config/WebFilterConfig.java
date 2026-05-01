@@ -1,23 +1,16 @@
-package com.project.ticket.config;
+package com.project.order.config;
 
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.client.RestTemplate;
 
 @Configuration
-public class RestTemplateConfig {
-
-    @Bean
-    public RestTemplate restTemplate() {
-        return new RestTemplate();
-    }
-
+public class WebFilterConfig {
     @Bean
     public FilterRegistrationBean<JwtAuthFilter> jwtFilter() {
         FilterRegistrationBean<JwtAuthFilter> bean = new FilterRegistrationBean<>();
         bean.setFilter(new JwtAuthFilter());
-        bean.addUrlPatterns("/ticket/*");
+        bean.addUrlPatterns("/order/*");
         bean.setOrder(1);
         return bean;
     }
