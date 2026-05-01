@@ -1,0 +1,26 @@
+<h2>前端页面范围</h2>
+<p class="subtitle">需要包含哪些页面？</p>
+
+<div class="options">
+  <div class="option" data-choice="full" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>完整闭环</h3>
+      <p>登录 → 注册 → 查票 → 购票 → 订单列表 → 支付模拟<br>5-6 个页面，完整用户旅程</p>
+    </div>
+  </div>
+  <div class="option" data-choice="core" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>核心功能</h3>
+      <p>查票 → 购票 → 订单列表<br>3 个页面，登录用固定测试用户</p>
+    </div>
+  </div>
+  <div class="option" data-choice="minimal" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>最小可用</h3>
+      <p>查票 + 购票（同一页面）<br>输入查询 → 点车次 → 一键购买</p>
+    </div>
+  </div>
+</div>
