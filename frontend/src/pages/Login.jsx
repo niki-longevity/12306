@@ -14,6 +14,7 @@ export default function Login() {
       const res = await login({ loginId, password });
       if (res.data.code === 1) {
         localStorage.setItem('token', res.data.data.token);
+        window._setToken(res.data.data.token);
         navigate('/tickets');
       } else {
         setError(res.data.msg);

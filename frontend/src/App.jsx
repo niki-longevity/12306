@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -8,7 +9,9 @@ import Pay from './pages/Pay';
 import './App.css';
 
 function App() {
-  const token = localStorage.getItem('token');
+  const [token, setToken] = useState(localStorage.getItem('token'));
+  window._setToken = (t) => { localStorage.setItem('token', t); setToken(t); };
+  window._logout = () => { localStorage.removeItem('token'); setToken(null); };
 
   return (
     <BrowserRouter>
@@ -19,7 +22,7 @@ function App() {
             <Link to="/tickets">查票</Link>
             <Link to="/orders">订单</Link>
             {token ? (
-              <button onClick={() => { localStorage.removeItem('token'); window.location.href = '/login'; }}>退出</button>
+              <button onClick={() => { window._logout(); }}>退出</button>
             ) : (
               <Link to="/login">登录</Link>
             )}

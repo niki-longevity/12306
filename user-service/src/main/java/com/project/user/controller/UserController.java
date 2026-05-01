@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import javax.security.auth.login.AccountNotFoundException;
 
+@CrossOrigin(origins = "*")
 @RestController
 @Slf4j
 @RequestMapping("/user")
