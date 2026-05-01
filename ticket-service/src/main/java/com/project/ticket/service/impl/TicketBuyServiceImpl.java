@@ -39,6 +39,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@org.springframework.context.annotation.Profile("!bench-outbox & !bench-http")
 public class TicketBuyServiceImpl implements TicketBuyService {
 
     // ===== 基础配置 =====
@@ -260,9 +261,21 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             return Result.error(attempts >= maxAttempts ? "系统繁忙，请重试" : "无可用座位");
         }
 
-        // 事务消息: ORDER_CREATE + 延时: ORDER_CLOSE
         int finalCarAbsIdx = convertCarRelativeToAbsolute(boughtCarRelIdx, seatTypeCode);
         long seatStartBitVal = calculateSeatStartBit(boughtCarRelIdx, boughtSeatGlobalIdx, totalSectionCount, seatTypeCode);
+        postLuaSuccess(date, trainCode, startStation, endStation, seatTypeCode, finalCarAbsIdx,
+                boughtSeatGlobalIdx, startSection, endSection, totalSectionCount, passengerCount,
+                sectionsJson, seatStartBitVal, passengerList);
+
+        log.info("购票成功：车次{}，车厢{}，座位{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
+        return Result.success("排队中");
+    }
+
+    /** Subclasses override this to implement different order-creation strategies */
+    protected void postLuaSuccess(LocalDate date, String trainCode, String startStation, String endStation,
+                                   int seatTypeCode, int carriageNum, int seatNum, int startSection, int endSection,
+                                   int totalSectionCount, int passengerCount, String sectionsJson, long seatStartBit,
+                                   List<TicketBuyDTO.Passenger> passengerList) {
         try {
             Map<String, Object> orderPayload = new HashMap<>();
             orderPayload.put("userId", BaseContext.getCurrentId());
@@ -271,14 +284,14 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             orderPayload.put("startStation", startStation);
             orderPayload.put("endStation", endStation);
             orderPayload.put("seatType", seatTypeCode);
-            orderPayload.put("carriageNum", finalCarAbsIdx);
-            orderPayload.put("seatNum", boughtSeatGlobalIdx);
+            orderPayload.put("carriageNum", carriageNum);
+            orderPayload.put("seatNum", seatNum);
             orderPayload.put("startSection", startSection);
             orderPayload.put("endSection", endSection);
             orderPayload.put("totalSectionCount", totalSectionCount);
             orderPayload.put("passengerCount", passengerCount);
             orderPayload.put("sectionsJson", sectionsJson);
-            orderPayload.put("seatStartBit", seatStartBitVal);
+            orderPayload.put("seatStartBit", seatStartBit);
 
             List<Map<String, String>> passengers = passengerList.stream()
                     .map(p -> { Map<String, String> m = new HashMap<>(); m.put("realName",p.getRealName()); m.put("idCard",p.getIdCard()); return m; })
@@ -286,21 +299,14 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             orderPayload.put("passengers", passengers);
             String payloadJson = objectMapper.writeValueAsString(orderPayload);
 
-            // ORDER_CREATE: 事务消息 (RocketMQ 半消息保证一致性)
             var msg = MessageBuilder.withPayload(payloadJson).build();
             rocketMQTemplate.sendMessageInTransaction("order-create-topic", msg, null);
 
-            // ORDER_CLOSE: 延时消息 (delayLevel=16 → ~30min)
             var closeMsg = MessageBuilder.withPayload(payloadJson).build();
             rocketMQTemplate.syncSend("order-close-topic", closeMsg, 3000, 16);
-
         } catch (Exception e) {
             log.error("MQ发送失败：车次{}", trainCode, e);
-            // 分布式事务回查会处理不一致
         }
-
-        log.info("购票成功：车次{}，车厢{}，座位{}", trainCode, finalCarAbsIdx, boughtSeatGlobalIdx);
-        return Result.success("排队中");
     }
 
     // ===================== V2: 位图空闲判断 — 一次提取 + 一次 AND =====================
