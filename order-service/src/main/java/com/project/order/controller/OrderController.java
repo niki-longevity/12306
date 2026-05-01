@@ -49,10 +49,18 @@ public class OrderController {
                 .build();
 
         @SuppressWarnings("unchecked")
-        List<Map<String, String>> passengerMaps = (List<Map<String, String>>) request.get("passengers");
+        Object pObj = request.get("passengers");
+        List<Map<String, Object>> passengerMaps;
+        if (pObj instanceof List) {
+            passengerMaps = (List<Map<String, Object>>) pObj;
+        } else if (pObj instanceof Map) {
+            passengerMaps = List.of((Map<String, Object>) pObj);
+        } else {
+            throw new RuntimeException("Invalid passengers format: " + pObj);
+        }
         List<OrderPassenger> passengers = passengerMaps.stream()
                 .map(m -> OrderPassenger.builder()
-                        .realName(m.get("realName")).idCard(m.get("idCard")).build())
+                        .realName((String) m.get("realName")).idCard((String) m.get("idCard")).build())
                 .collect(Collectors.toList());
 
         return Result.success(orderService.create(order, passengers));

@@ -23,7 +23,7 @@ spring:
           min-idle: 0
 
 rocketmq:
-  name-server: 127.0.0.1:9876
+  name-server: 172.22.32.238:9876
   producer:
     group: ticket-outbox-producer
 

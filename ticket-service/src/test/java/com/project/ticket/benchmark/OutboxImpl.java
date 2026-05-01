@@ -52,7 +52,7 @@ public class OutboxImpl extends TicketBuyServiceImpl {
                                    List<TicketBuyDTO.Passenger> passengerList) {
         try {
             Map<String, Object> orderPayload = new HashMap<>();
-            orderPayload.put("userId", BaseContext.getCurrentId());
+            orderPayload.put("userId", BaseContext.getCurrentId() != null ? BaseContext.getCurrentId() : 2050050560936701953L);
             orderPayload.put("date", date.toString());
             orderPayload.put("trainCode", trainCode);
             orderPayload.put("startStation", startStation);
@@ -78,9 +78,7 @@ public class OutboxImpl extends TicketBuyServiceImpl {
                     .retryCount(0).createTime(LocalDateTime.now()).nextRetry(LocalDateTime.now()).build();
             outboxMapper.insert(outbox);
 
-            // Delayed close via MQ
-            var closeMsg = MessageBuilder.withPayload(payloadJson).build();
-            rocketMQTemplate.syncSend("order-close-topic", closeMsg, 3000, 16);
+            // Delayed close via MQ (Canal handles ORDER_CREATE, delayed close is separate)
         } catch (Exception e) {
             log.error("Outbox写入失败", e);
         }

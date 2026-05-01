@@ -28,7 +28,7 @@ public class OutboxRetryScheduler {
     private final RocketMQTemplate rocketMQTemplate;
     private static final int MAX_RETRIES = 5;
 
-    @Scheduled(fixedRate = 5000)
+    @Scheduled(fixedDelay = 30000)
     public void retryPendingMessages() {
         LambdaQueryWrapper<TicketOutbox> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(TicketOutbox::getStatus, "PENDING")

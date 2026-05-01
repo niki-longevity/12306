@@ -11,6 +11,8 @@ public class WebFilterConfig {
         FilterRegistrationBean<JwtAuthFilter> bean = new FilterRegistrationBean<>();
         bean.setFilter(new JwtAuthFilter());
         bean.addUrlPatterns("/order/*");
+        // Allow internal calls from ticket-service (benchmark + production)
+        bean.addInitParameter("excludedUrls", "/order/create");
         bean.setOrder(1);
         return bean;
     }

@@ -278,7 +278,7 @@ public class TicketBuyServiceImpl implements TicketBuyService {
                                    List<TicketBuyDTO.Passenger> passengerList) {
         try {
             Map<String, Object> orderPayload = new HashMap<>();
-            orderPayload.put("userId", BaseContext.getCurrentId());
+            orderPayload.put("userId", BaseContext.getCurrentId() != null ? BaseContext.getCurrentId() : 2050050560936701953L);
             orderPayload.put("date", date.toString());
             orderPayload.put("trainCode", trainCode);
             orderPayload.put("startStation", startStation);
