@@ -1,10 +1,9 @@
 server:
   port: 8082
+
 spring:
   profiles:
     active: dev
-  autoconfigure:
-    exclude: org.apache.rocketmq.spring.autoconfigure.RocketMQAutoConfiguration
   datasource:
     driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
     url: jdbc:shardingsphere:classpath:sharding.yaml
@@ -22,6 +21,11 @@ spring:
           max-wait: -1ms
           max-idle: 8
           min-idle: 0
+
+rocketmq:
+  name-server: 127.0.0.1:9876
+  producer:
+    group: ticket-outbox-producer
 
 mybatis-plus:
   configuration:

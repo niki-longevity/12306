@@ -1,13 +1,15 @@
 server:
   port: 8083
+
 spring:
   profiles:
     active: dev
-  autoconfigure:
-    exclude: org.apache.rocketmq.spring.autoconfigure.RocketMQAutoConfiguration
   datasource:
     driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
     url: jdbc:shardingsphere:classpath:sharding.yaml
+
+rocketmq:
+  name-server: 127.0.0.1:9876
 
 mybatis-plus:
   configuration:
