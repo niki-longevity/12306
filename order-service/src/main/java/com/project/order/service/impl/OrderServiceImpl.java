@@ -8,6 +8,7 @@ import com.project.order.mapper.SeatBitmapMapper;
 import com.project.common.pojo.entity.Order;
 import com.project.common.pojo.entity.OrderPassenger;
 import com.project.common.pojo.entity.SeatBitmap;
+import com.project.common.exception.BaseException;
 import com.project.order.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -66,7 +67,7 @@ public class OrderServiceImpl implements OrderService {
             if (current != null && current.getBitmap() != null) {
                 repairRedisAfterConflict(order, current.getBitmap(), mask);
             }
-            throw new RuntimeException("座位冲突，请重试");
+            throw new BaseException("座位冲突，请重试");
         }
 
         order.setStatus("UNPAID");
@@ -93,7 +94,7 @@ public class OrderServiceImpl implements OrderService {
                .set(Order::getUpdateTime, LocalDateTime.now());
         int rows = orderMapper.update(null, wrapper);
         if (rows == 0) {
-            throw new RuntimeException("支付失败：订单不存在或已过期");
+            throw new BaseException("支付失败：订单不存在或已过期");
         }
         log.info("订单支付成功：orderId={}", orderId);
         return orderMapper.selectById(orderId);
@@ -109,7 +110,7 @@ public class OrderServiceImpl implements OrderService {
                .set(Order::getUpdateTime, LocalDateTime.now());
         int rows = orderMapper.update(null, wrapper);
         if (rows == 0) {
-            throw new RuntimeException("取消失败：订单不存在或无法取消");
+            throw new BaseException("取消失败：订单不存在或无法取消");
         }
         log.info("订单手动取消：orderId={}", orderId);
         return orderMapper.selectById(orderId);
