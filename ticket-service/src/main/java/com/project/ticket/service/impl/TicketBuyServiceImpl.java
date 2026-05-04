@@ -300,7 +300,7 @@ public class TicketBuyServiceImpl implements TicketBuyService {
             String payloadJson = objectMapper.writeValueAsString(orderPayload);
 
             var msg = MessageBuilder.withPayload(payloadJson).build();
-            rocketMQTemplate.sendMessageInTransaction("order-create-topic", msg, null);
+            rocketMQTemplate.syncSend("order-create-topic", msg, 3000);
 
             var closeMsg = MessageBuilder.withPayload(payloadJson).build();
             rocketMQTemplate.syncSend("order-close-topic", closeMsg, 3000, 16);
