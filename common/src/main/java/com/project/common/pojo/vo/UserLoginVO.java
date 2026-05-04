@@ -1,5 +1,6 @@
 package com.project.common.pojo.vo;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,7 +14,7 @@ import java.io.Serializable;
 @AllArgsConstructor
 public class UserLoginVO implements Serializable {
 
-    // 用户id
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long id;
 
     // 用户名
