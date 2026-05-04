@@ -32,9 +32,10 @@ export default function Orders() {
               <td>{o.date}</td>
               <td>{o.carriageNum}车{o.seatNum}座</td>
               <td>{o.status}</td>
-              <td>
+              <td style={{ display: 'flex', gap: 8 }}>
                 {o.status === 'UNPAID' && <button onClick={() => navigate(`/pay/${o.id}`, { state: o })}>支付</button>}
-                {o.status === 'UNPAID' && <button onClick={() => cancel(o.id)}>取消</button>}
+                {o.status === 'UNPAID' && <button onClick={() => cancel(o.id)}>取消订单</button>}
+                {o.status === 'PAID' && <button onClick={() => cancel(o.id)} style={{ background: '#e8870a' }}>退票</button>}
               </td>
             </tr>
           ))}
