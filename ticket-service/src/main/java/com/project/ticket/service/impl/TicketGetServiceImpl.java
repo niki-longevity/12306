@@ -9,6 +9,7 @@ import com.project.ticket.pojo.dto.TicketListDTO;
 import com.project.ticket.pojo.entity.TrainStopover;
 import com.project.ticket.pojo.vo.TicketListVO;
 import com.project.ticket.service.TicketGetService;
+import com.project.ticket.service.ScheduleService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.Cache;
@@ -40,6 +41,7 @@ public class TicketGetServiceImpl implements TicketGetService {
     private final CacheManager trainStopCacheManager; // JVM缓存（Caffeine）
     private final TrainStopoverMapper trainStopoverMapper; // 经停站数据库Mapper
     private final TrainTicketSectionMapper trainTicketSectionMapper; // 库存数据库Mapper
+    private final ScheduleService scheduleService;
 
     /**
      * 查询车票
@@ -57,6 +59,12 @@ public class TicketGetServiceImpl implements TicketGetService {
         if (date == null || startStation == null || endStation == null
                 || startStation.equals(endStation)) {
             log.warn("查票参数无效：date={}, start={}, end={}", date, startStation, endStation);
+            return Collections.emptyList();
+        }
+
+        // 校验日期是否在可售票窗口内
+        if (!scheduleService.isDateInWindow(date)) {
+            log.warn("查询日期{}不在售票窗口内", date);
             return Collections.emptyList();
         }
 
