@@ -16,6 +16,7 @@ import org.springframework.util.CollectionUtils;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.stream.IntStream;
 
 @Slf4j
 @Service
@@ -107,12 +108,12 @@ public class ScheduleServiceImpl implements ScheduleService {
                 trainStopoverMapper.insert(entity);
             }
 
-            buildAndCacheTrainBO(date, tmpl, stops);
-
             int secCount = stops.size() - 1;
             int secondCars = tmpl.getSecondClassCarriage() != null ? tmpl.getSecondClassCarriage() : 6;
             int firstCars = tmpl.getFirstClassCarriage() != null ? tmpl.getFirstClassCarriage() : 1;
             int businessCars = tmpl.getBusinessCarriage() != null ? tmpl.getBusinessCarriage() : 1;
+
+            buildAndCacheTrainBO(date, tmpl, stops, businessCars, firstCars, secondCars);
 
             initSeatStock(date, tmpl.getTrainCode(), "2", secondCars * 90, secCount);
             initSeatStock(date, tmpl.getTrainCode(), "1", firstCars * 28, secCount);
@@ -127,7 +128,8 @@ public class ScheduleServiceImpl implements ScheduleService {
         }
     }
 
-    private void buildAndCacheTrainBO(LocalDate date, TrainTemplate tmpl, List<TrainTemplateStopover> stops) {
+    private void buildAndCacheTrainBO(LocalDate date, TrainTemplate tmpl, List<TrainTemplateStopover> stops,
+                                       int businessCars, int firstCars, int secondCars) {
         List<TicketListBO.StopoverStation> stList = stops.stream().map(s ->
                 TicketListBO.StopoverStation.builder()
                         .stopoverStation(s.getStationName()).stationIndex(s.getStationIndex())
@@ -142,11 +144,27 @@ public class ScheduleServiceImpl implements ScheduleService {
             }
         }
 
+        TicketListBO.CarriageInfo businessInfo = businessCars > 0
+                ? TicketListBO.CarriageInfo.builder().carriageType("商务座车厢")
+                    .carriageIndexes(IntStream.rangeClosed(1, businessCars).boxed().toList()).build()
+                : null;
+        TicketListBO.CarriageInfo firstInfo = firstCars > 0
+                ? TicketListBO.CarriageInfo.builder().carriageType("一等座车厢")
+                    .carriageIndexes(IntStream.rangeClosed(businessCars + 1, businessCars + firstCars).boxed().toList()).build()
+                : null;
+        TicketListBO.CarriageInfo secondInfo = secondCars > 0
+                ? TicketListBO.CarriageInfo.builder().carriageType("二等座车厢")
+                    .carriageIndexes(IntStream.rangeClosed(businessCars + firstCars + 1, businessCars + firstCars + secondCars).boxed().toList()).build()
+                : null;
+
         TicketListBO bo = TicketListBO.builder().date(date).code(tmpl.getTrainCode())
                 .startStation(stops.get(0).getStationName())
                 .endStation(stops.get(stops.size() - 1).getStationName())
                 .stopoverStations(stList)
                 .intervalStockMap(stockMap)
+                .businessCarriageInfo(businessInfo)
+                .firstClassCarriageInfo(firstInfo)
+                .secondClassCarriageInfo(secondInfo)
                 .build();
 
         try {
