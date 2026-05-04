@@ -33,10 +33,15 @@ public class OrderServiceImpl implements OrderService {
     private final StringRedisTemplate stringRedisTemplate;
 
     private static final DefaultRedisScript<Long> CONFLICT_FIX_LUA;
+    private static final DefaultRedisScript<Long> REFUND_LUA;
     static {
         CONFLICT_FIX_LUA = new DefaultRedisScript<>();
         CONFLICT_FIX_LUA.setLocation(new org.springframework.core.io.ClassPathResource("lua/ticket_conflict_fix.lua"));
         CONFLICT_FIX_LUA.setResultType(Long.class);
+
+        REFUND_LUA = new DefaultRedisScript<>();
+        REFUND_LUA.setLocation(new org.springframework.core.io.ClassPathResource("lua/ticket_refund.lua"));
+        REFUND_LUA.setResultType(Long.class);
     }
 
     @Override
@@ -101,19 +106,69 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    @Transactional
     public Order cancel(Long orderId, Long userId) {
+        Order order = orderMapper.selectById(orderId);
+        if (order == null || !order.getUserId().equals(userId)) {
+            throw new BaseException("取消失败：订单不存在或无法取消");
+        }
+        String oldStatus = order.getStatus();
+        if (!"UNPAID".equals(oldStatus) && !"PAID".equals(oldStatus)) {
+            throw new BaseException("取消失败：订单状态不允许取消");
+        }
+
         LambdaUpdateWrapper<Order> wrapper = new LambdaUpdateWrapper<>();
         wrapper.eq(Order::getId, orderId)
                .eq(Order::getUserId, userId)
-               .eq(Order::getStatus, "UNPAID")
+               .in(Order::getStatus, "UNPAID", "PAID")
                .set(Order::getStatus, "CANCELLED")
                .set(Order::getUpdateTime, LocalDateTime.now());
         int rows = orderMapper.update(null, wrapper);
         if (rows == 0) {
             throw new BaseException("取消失败：订单不存在或无法取消");
         }
-        log.info("订单手动取消：orderId={}", orderId);
+
+        // PAID 订单取消需要回滚Redis和MySQL座位
+        if ("PAID".equals(oldStatus)) {
+            rollbackRedisSeat(order);
+            byte[] clearMask = buildCancelMask(order.getSeatStartBit(),
+                    order.getStartSection(), order.getEndSection(), order.getTotalSectionCount());
+            seatBitmapMapper.clearBitmap(
+                    order.getTrainCode(), order.getDate(), order.getSeatType(),
+                    order.getCarriageNum(), order.getSeatNum(), clearMask);
+        }
+
+        log.info("订单手动取消：orderId={}, 原状态={}", orderId, oldStatus);
         return orderMapper.selectById(orderId);
+    }
+
+    private void rollbackRedisSeat(Order order) {
+        String bitmapKey = String.format("%s:%s:%d:bitmap",
+                order.getDate(), order.getTrainCode(), order.getSeatType());
+        String stockKey = String.format("Stock:%s:%s:%d",
+                order.getDate(), order.getTrainCode(), order.getSeatType());
+
+        stringRedisTemplate.execute(REFUND_LUA,
+                Arrays.asList(bitmapKey, stockKey),
+                String.valueOf(order.getSeatStartBit()),
+                String.valueOf(order.getStartSection()),
+                String.valueOf(order.getEndSection()),
+                String.valueOf(order.getTotalSectionCount()),
+                String.valueOf(order.getPassengerCount()),
+                order.getSectionsJson() != null ? order.getSectionsJson() : "[]");
+        log.info("Redis座位回滚成功：orderId={}, bitmapKey={}", order.getId(), bitmapKey);
+    }
+
+    private byte[] buildCancelMask(long seatStartBit, int startSection, int endSection, int totalSectionCount) {
+        int byteLen = (totalSectionCount + 7) / 8;
+        byte[] mask = new byte[byteLen];
+        for (int s = startSection; s <= endSection; s++) {
+            int bitPos = s - 1;
+            int byteIdx = bitPos / 8;
+            int bitIdx = bitPos % 8;
+            mask[byteIdx] |= (1 << bitIdx);
+        }
+        return mask;
     }
 
     @Override
