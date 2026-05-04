@@ -2,8 +2,11 @@ package com.project.ticket.controller;
 
 import com.project.ticket.pojo.dto.TicketBuyDTO;
 import com.project.ticket.pojo.dto.TicketListDTO;
+import com.project.ticket.pojo.vo.CityIndexVO;
+import com.project.ticket.pojo.vo.StationVO;
 import com.project.ticket.pojo.vo.TicketListVO;
 import com.project.common.result.Result;
+import com.project.ticket.service.StationService;
 import com.project.ticket.service.TicketBuyService;
 import com.project.ticket.service.TicketGetService;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +26,9 @@ public class TicketController {
 
     @Autowired
     private TicketBuyService ticketBuyService;
+
+    @Autowired
+    private StationService stationService;
 
     /**
      * 查询 指定日期、指定出发站和到达站 的所有车次的票信息
@@ -45,5 +51,15 @@ public class TicketController {
     public Result<String> buy(@RequestBody TicketBuyDTO ticketBuyDTO) {
         log.info("购买车票:{}", ticketBuyDTO);
         return ticketBuyService.buy(ticketBuyDTO);
+    }
+
+    @GetMapping("/station/search")
+    public Result<List<StationVO>> searchStations(@RequestParam String keyword) {
+        return Result.success(stationService.search(keyword));
+    }
+
+    @GetMapping("/station/cities")
+    public Result<List<CityIndexVO>> stationCities() {
+        return Result.success(stationService.cityIndex());
     }
 }
