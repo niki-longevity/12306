@@ -16,4 +16,8 @@ export const buyTicket = (data) => api.put('/api/ticket/buy', data);
 export const getOrders = () => api.get('/api/order/list');
 export const payOrder = (id) => api.put(`/api/order/${id}/pay`);
 export const cancelOrder = (id) => api.put(`/api/order/${id}/cancel`);
+export const searchStations = (keyword) =>
+  api.get('/api/ticket/station/search', { params: { keyword } });
+export const getStationCities = () =>
+  api.get('/api/ticket/station/cities');
 export default api;

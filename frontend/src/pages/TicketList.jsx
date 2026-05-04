@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { queryTickets } from '../api';
+import StationPicker from '../components/StationPicker';
 
 const seatNames = { 0: '商务座', 1: '一等座', 2: '二等座' };
 
@@ -26,8 +27,8 @@ export default function TicketList() {
       <h2>查票</h2>
       <div className="search-bar">
         <input type="date" value={date} onChange={e => setDate(e.target.value)} />
-        <input placeholder="出发站" value={start} onChange={e => setStart(e.target.value)} />
-        <input placeholder="到达站" value={end} onChange={e => setEnd(e.target.value)} />
+        <StationPicker value={start} onChange={setStart} placeholder="出发站 · 城市名/站名/拼音" />
+        <StationPicker value={end} onChange={setEnd} placeholder="到达站 · 城市名/站名/拼音" />
         <button onClick={search} disabled={loading}>{loading ? '查询中...' : '查询'}</button>
       </div>
       <table>
