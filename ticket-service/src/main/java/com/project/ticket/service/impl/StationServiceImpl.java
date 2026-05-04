@@ -52,8 +52,8 @@ public class StationServiceImpl implements StationService {
     @Override
     public List<CityIndexVO> cityIndex() {
         List<StationDict> all = mapper.selectList(new QueryWrapper<StationDict>()
-                .select("city", "pinyin")
-                .groupBy("city"));
+                .select("city, pinyin")
+                .groupBy("city, pinyin"));
 
         Map<String, String> cityFirstLetter = new HashMap<>();
         for (StationDict s : all) {

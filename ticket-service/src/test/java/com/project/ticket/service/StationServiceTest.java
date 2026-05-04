@@ -12,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,10 +50,12 @@ class StationServiceTest {
 
     @Test
     void searchByPinyinAbbr_shouldMatchPrefix() {
-        when(mapper.selectList(any(QueryWrapper.class))).thenReturn(List.of(
-                StationDict.builder().stationName("深圳北站").city("深圳").province("广东")
-                        .pinyin("shenzhenbei").pinyinAbbr("szb").build()
-        ));
+        when(mapper.selectList(any(QueryWrapper.class)))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(List.of(
+                        StationDict.builder().stationName("深圳北站").city("深圳").province("广东")
+                                .pinyin("shenzhenbei").pinyinAbbr("szb").build()
+                ));
 
         List<StationVO> result = service.search("szb");
 
