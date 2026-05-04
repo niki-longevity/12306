@@ -128,15 +128,13 @@ public class OrderServiceImpl implements OrderService {
             throw new BaseException("取消失败：订单不存在或无法取消");
         }
 
-        // PAID 订单取消需要回滚Redis和MySQL座位
-        if ("PAID".equals(oldStatus)) {
-            rollbackRedisSeat(order);
-            byte[] clearMask = buildCancelMask(order.getSeatStartBit(),
-                    order.getStartSection(), order.getEndSection(), order.getTotalSectionCount());
-            seatBitmapMapper.clearBitmap(
-                    order.getTrainCode(), order.getDate(), order.getSeatType(),
-                    order.getCarriageNum(), order.getSeatNum(), clearMask);
-        }
+        // 任何取消都需要回滚Redis和MySQL座位（购票时已扣减，取消必须归还）
+        rollbackRedisSeat(order);
+        byte[] clearMask = buildCancelMask(order.getSeatStartBit(),
+                order.getStartSection(), order.getEndSection(), order.getTotalSectionCount());
+        seatBitmapMapper.clearBitmap(
+                order.getTrainCode(), order.getDate(), order.getSeatType(),
+                order.getCarriageNum(), order.getSeatNum(), clearMask);
 
         log.info("订单手动取消：orderId={}, 原状态={}", orderId, oldStatus);
         return orderMapper.selectById(orderId);
