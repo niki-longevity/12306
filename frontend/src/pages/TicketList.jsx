@@ -7,9 +7,9 @@ import CityPanel from '../components/CityPanel';
 const seatNames = { 0: '商务座', 1: '一等座', 2: '二等座' };
 
 export default function TicketList() {
-  const [date, setDate] = useState('2026-05-01');
-  const [start, setStart] = useState('Beijing');
-  const [end, setEnd] = useState('Shanghai');
+  const [date, setDate] = useState('2026-05-06');
+  const [start, setStart] = useState('广州南站');
+  const [end, setEnd] = useState('武汉站');
   const [trains, setTrains] = useState([]);
   const [loading, setLoading] = useState(false);
   const [cityPanelFor, setCityPanelFor] = useState(null); // 'start' | 'end' | null
@@ -64,12 +64,15 @@ export default function TicketList() {
           ))}
         </tbody>
       </table>
+      {trains.length === 0 && !loading && (
+        <p style={{ color: '#999', marginTop: 16 }}>暂无车次，请检查出发站和到达站是否正确</p>
+      )}
       {cityPanelFor && (
         <CityPanel
           onClose={() => setCityPanelFor(null)}
-          onSelectStation={(city) => {
-            if (cityPanelFor === 'start') setStart(city);
-            else setEnd(city);
+          onSelectStation={(stationName) => {
+            if (cityPanelFor === 'start') setStart(stationName);
+            else setEnd(stationName);
           }}
         />
       )}
