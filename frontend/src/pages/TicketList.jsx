@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { queryTickets } from '../api';
 import StationPicker from '../components/StationPicker';
+import CityPanel from '../components/CityPanel';
 
 const seatNames = { 0: '商务座', 1: '一等座', 2: '二等座' };
 
@@ -11,6 +12,7 @@ export default function TicketList() {
   const [end, setEnd] = useState('Shanghai');
   const [trains, setTrains] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [cityPanelFor, setCityPanelFor] = useState(null); // 'start' | 'end' | null
   const navigate = useNavigate();
 
   const search = async () => {
@@ -22,13 +24,28 @@ export default function TicketList() {
     setLoading(false);
   };
 
+  const swapStations = () => {
+    const tmp = start;
+    setStart(end);
+    setEnd(tmp);
+  };
+
   return (
     <div>
       <h2>查票</h2>
       <div className="search-bar">
         <input type="date" value={date} onChange={e => setDate(e.target.value)} />
         <StationPicker value={start} onChange={setStart} placeholder="出发站 · 城市名/站名/拼音" />
+        <button onClick={() => setCityPanelFor('start')}
+          style={{ background: 'none', border: '1px solid #ddd', borderRadius: 6, padding: '8px 10px', cursor: 'pointer', fontSize: 16 }}
+          title="城市选择">🏙</button>
+        <button onClick={swapStations}
+          style={{ background: 'none', border: '1px solid #ddd', borderRadius: 6, padding: '8px 10px', cursor: 'pointer', fontSize: 16 }}
+          title="交换出发和到达">⇄</button>
         <StationPicker value={end} onChange={setEnd} placeholder="到达站 · 城市名/站名/拼音" />
+        <button onClick={() => setCityPanelFor('end')}
+          style={{ background: 'none', border: '1px solid #ddd', borderRadius: 6, padding: '8px 10px', cursor: 'pointer', fontSize: 16 }}
+          title="城市选择">🏙</button>
         <button onClick={search} disabled={loading}>{loading ? '查询中...' : '查询'}</button>
       </div>
       <table>
@@ -47,6 +64,15 @@ export default function TicketList() {
           ))}
         </tbody>
       </table>
+      {cityPanelFor && (
+        <CityPanel
+          onClose={() => setCityPanelFor(null)}
+          onSelectStation={(city) => {
+            if (cityPanelFor === 'start') setStart(city);
+            else setEnd(city);
+          }}
+        />
+      )}
     </div>
   );
 }
