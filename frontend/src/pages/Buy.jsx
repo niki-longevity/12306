@@ -1,30 +1,62 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { buyTicket } from '../api';
+import { buyTicket, getPassengers } from '../api';
+import { useToast } from '../components/Toast';
 
 const seatNames = { 0: '商务座', 1: '一等座', 2: '二等座' };
+const TYPE_LABELS = { ADULT: '成人', STUDENT: '学生', CHILD: '儿童' };
+const TYPE_COLORS = { ADULT: '#1a73e8', STUDENT: '#d32f2f', CHILD: '#2e7d32' };
 
 export default function Buy() {
   const { state } = useLocation();
   const navigate = useNavigate();
+  const toast = useToast();
   const train = state?.train || {};
   const [seatType, setSeatType] = useState(2);
-  const [passengers, setPassengers] = useState([{ realName: '', idCard: '' }]);
+  const [savedPassengers, setSavedPassengers] = useState([]);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [manualMode, setManualMode] = useState(false);
+  const [manualPassengers, setManualPassengers] = useState([{ realName: '', idCard: '' }]);
   const [result, setResult] = useState(null);
 
-  const addPassenger = () => setPassengers([...passengers, { realName: '', idCard: '' }]);
-  const removePassenger = (i) => setPassengers(passengers.filter((_, idx) => idx !== i));
+  useEffect(() => {
+    getPassengers().then(res => {
+      if (res.data.code === 1) setSavedPassengers(res.data.data || []);
+    }).catch(() => {});
+  }, []);
 
-  const update = (i, k) => (e) => {
-    const arr = [...passengers];
+  const toggleSelect = (p) => {
+    const next = new Set(selectedIds);
+    if (next.has(p.id)) next.delete(p.id);
+    else next.add(p.id);
+    setSelectedIds(next);
+  };
+
+  const selectedPassengers = savedPassengers.filter(p => selectedIds.has(p.id));
+
+  const addManual = () => setManualPassengers([...manualPassengers, { realName: '', idCard: '' }]);
+  const removeManual = (i) => setManualPassengers(manualPassengers.filter((_, idx) => idx !== i));
+  const updateManual = (i, k) => (e) => {
+    const arr = [...manualPassengers];
     arr[i][k] = e.target.value;
-    setPassengers(arr);
+    setManualPassengers(arr);
+  };
+
+  const getFinalPassengers = () => {
+    const fromSaved = selectedPassengers.map(p => ({ realName: p.realName, idCard: p.idCard }));
+    if (manualMode) return fromSaved.concat(manualPassengers);
+    return fromSaved;
   };
 
   const handleBuy = async () => {
+    const passengers = getFinalPassengers();
+    if (passengers.length === 0) {
+      toast.show('请至少选择一位乘车人', 'error');
+      return;
+    }
     for (let i = 0; i < passengers.length; i++) {
       if (!passengers[i].realName || !passengers[i].idCard) {
-        alert(`请填写第${i + 1}位乘车人信息`);
+        toast.show(`请填写第${i + 1}位乘车人信息`, 'error');
         return;
       }
     }
@@ -35,7 +67,7 @@ export default function Buy() {
         seatType, passengerList: passengers,
       });
       setResult(res.data);
-    } catch (e) { alert('购票失败'); }
+    } catch { toast.show('购票失败', 'error'); }
   };
 
   if (result) {
@@ -56,12 +88,12 @@ export default function Buy() {
     { type: 1, name: '一等座', num: train.firstClassNum, price: train.firstClassPrice },
     { type: 0, name: '商务座', num: train.businessNum, price: train.businessPrice },
   ];
+  const selectedPrice = prices.find(p => p.type === seatType)?.price || 0;
 
   return (
-    <div className="form-page" style={{ maxWidth: 520 }}>
+    <div className="form-page" style={{ maxWidth: 560 }}>
       <h2>购票确认</h2>
 
-      {/* Train info card */}
       <div style={{ background: '#f8f9fa', borderRadius: 8, padding: 16, marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <span style={{ fontSize: 22, fontWeight: 700, color: '#1a73e8' }}>{train.code}</span>
@@ -72,12 +104,9 @@ export default function Buy() {
           <span style={{ color: '#999' }}>→</span>
           <span>{state?.end}</span>
         </div>
-        <div style={{ fontSize: 13, color: '#999', marginTop: 4 }}>
-          {train.startTime} — {train.endTime}
-        </div>
+        <div style={{ fontSize: 13, color: '#999', marginTop: 4 }}>{train.startTime} — {train.endTime}</div>
       </div>
 
-      {/* Seat type selector */}
       <div style={{ marginBottom: 20 }}>
         <label style={{ fontSize: 14, fontWeight: 600, display: 'block', marginBottom: 8 }}>座位类型</label>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -101,36 +130,80 @@ export default function Buy() {
         </div>
       </div>
 
-      {/* Passengers */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 600 }}>乘车人</span>
-          <button onClick={addPassenger}
-            style={{ background: 'none', border: '1px solid #1a73e8', color: '#1a73e8',
-                     borderRadius: 4, padding: '4px 12px', fontSize: 13, cursor: 'pointer' }}>
-            + 添加
-          </button>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>选择乘车人</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setManualMode(!manualMode)}
+              style={{ background: 'none', border: '1px solid #1a73e8', color: '#1a73e8', borderRadius: 4, padding: '4px 12px', fontSize: 13, cursor: 'pointer' }}>
+              {manualMode ? '关闭手动输入' : '+ 手动输入'}
+            </button>
+            <button onClick={() => navigate('/passengers')}
+              style={{ background: 'none', border: '1px solid #1a73e8', color: '#1a73e8', borderRadius: 4, padding: '4px 12px', fontSize: 13, cursor: 'pointer' }}>
+              管理乘车人
+            </button>
+          </div>
         </div>
-        {passengers.map((p, i) => (
+
+        {savedPassengers.length > 0 ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+            {savedPassengers.map(p => (
+              <div key={p.id} onClick={() => toggleSelect(p)}
+                style={{
+                  padding: '8px 14px', borderRadius: 6, border: '2px solid',
+                  borderColor: selectedIds.has(p.id) ? '#1a73e8' : '#ddd',
+                  background: selectedIds.has(p.id) ? '#e8f0fe' : '#fff',
+                  cursor: 'pointer', fontSize: 13, transition: '0.15s',
+                }}>
+                <strong>{p.realName}</strong>
+                <span style={{ color: TYPE_COLORS[p.passengerType] || '#666', fontSize: 11, marginLeft: 6 }}>
+                  {TYPE_LABELS[p.passengerType] || p.passengerType}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ padding: 16, background: '#f8f9fa', borderRadius: 6, fontSize: 13, color: '#999', textAlign: 'center', marginBottom: 12 }}>
+            暂无已保存的乘车人，请手动输入或先
+            <span onClick={() => navigate('/passengers')} style={{ color: '#1a73e8', cursor: 'pointer' }}>添加乘车人</span>
+          </div>
+        )}
+
+        {selectedPassengers.length > 0 && (
+          <div style={{ background: '#f8f9fa', padding: 12, borderRadius: 6, fontSize: 13, marginBottom: 12 }}>
+            <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 12, color: '#666' }}>已选乘车人：</div>
+            {selectedPassengers.map((p, i) => (
+              <div key={p.id} style={{ marginBottom: 4 }}>
+                {i + 1}. {p.realName} — {p.idCard.substring(0, 4)}****{p.idCard.substring(14)} — {TYPE_LABELS[p.passengerType]}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {manualMode && manualPassengers.map((p, i) => (
           <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
             <span style={{ fontSize: 13, color: '#999', minWidth: 20 }}>{i + 1}.</span>
-            <input placeholder="姓名" value={p.realName} onChange={update(i, 'realName')}
+            <input placeholder="姓名" value={p.realName} onChange={updateManual(i, 'realName')}
               style={{ flex: 1, padding: '8px 10px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14 }} />
-            <input placeholder="身份证号" value={p.idCard} onChange={update(i, 'idCard')}
+            <input placeholder="身份证号" value={p.idCard} onChange={updateManual(i, 'idCard')}
               style={{ flex: 2, padding: '8px 10px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14 }} />
-            {passengers.length > 1 && (
-              <button onClick={() => removePassenger(i)}
-                style={{ background: 'none', border: 'none', color: '#d32f2f', cursor: 'pointer', fontSize: 18, padding: 4 }}>
-                ×
-              </button>
+            {manualPassengers.length > 1 && (
+              <button onClick={() => removeManual(i)}
+                style={{ background: 'none', border: 'none', color: '#d32f2f', cursor: 'pointer', fontSize: 18, padding: 4 }}>×</button>
             )}
           </div>
         ))}
+        {manualMode && (
+          <button onClick={addManual}
+            style={{ background: 'none', border: '1px dashed #1a73e8', color: '#1a73e8', borderRadius: 4, padding: '6px 12px', fontSize: 13, cursor: 'pointer', marginBottom: 8 }}>
+            + 添加
+          </button>
+        )}
       </div>
 
       <button className="primary" onClick={handleBuy}
         style={{ width: '100%', padding: 14, fontSize: 16, fontWeight: 600 }}>
-        确认购买 · ¥{(prices.find(p => p.type === seatType)?.price || 0) * passengers.length}
+        确认购买 · ¥{selectedPrice * Math.max(getFinalPassengers().length, 1)}
       </button>
     </div>
   );
