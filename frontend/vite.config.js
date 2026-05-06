@@ -7,7 +7,7 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api/user': { target: 'http://localhost:8081', rewrite: (p) => p.replace('/api', '') },
-      '/api/ticket': { target: 'http://localhost:8082', rewrite: (p) => p.replace('/api', '') },
+      '/api/ticket': { target: 'http://localhost:8092', rewrite: (p) => p.replace('/api', '') },
       '/api/order': { target: 'http://localhost:8083', rewrite: (p) => p.replace('/api', '') },
     }
   }
