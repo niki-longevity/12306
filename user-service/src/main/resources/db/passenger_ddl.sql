@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS passenger (
+    id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    real_name VARCHAR(30) NOT NULL,
+    id_card VARCHAR(18) NOT NULL,
+    passenger_type VARCHAR(10) NOT NULL DEFAULT 'ADULT',
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
