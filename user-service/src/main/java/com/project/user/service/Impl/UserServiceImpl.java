@@ -8,9 +8,13 @@ import com.project.user.mapper.UserMapper;
 import com.project.user.mapper.UsernamePhoneMapper;
 import com.project.common.pojo.dto.UserLoginDTO;
 import com.project.common.pojo.dto.UserRegisterDTO;
+import com.project.common.pojo.dto.ChangePasswordDTO;
+import com.project.common.pojo.dto.UpdateProfileDTO;
 import com.project.common.pojo.entity.User;
 import com.project.common.pojo.entity.UsernamePhone;
 import com.project.common.pojo.vo.UserLoginVO;
+import com.project.common.pojo.vo.UserProfileVO;
+import com.project.common.exception.BaseException;
 import com.project.user.service.UserService;
 import com.project.user.utils.JwtUtil;
 import com.project.user.utils.LoginIdentityUtils;
@@ -118,5 +122,46 @@ public class UserServiceImpl implements UserService {
         up.setUsername(username);
         up.setPhone(user.getPhone());
         usernamePhoneMapper.insert(up);
+    }
+
+    @Override
+    public UserProfileVO getProfile(Long userId) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BaseException("用户不存在");
+        }
+        return UserProfileVO.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .phone(user.getPhone())
+                .realName(user.getRealName())
+                .idCard(user.getIdCard())
+                .createTime(user.getCreateTime())
+                .build();
+    }
+
+    @Override
+    public void updateProfile(Long userId, UpdateProfileDTO dto) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BaseException("用户不存在");
+        }
+        if (dto.getPhone() != null && !dto.getPhone().isEmpty()) {
+            user.setPhone(dto.getPhone());
+            userMapper.updateById(user);
+        }
+    }
+
+    @Override
+    public void changePassword(Long userId, ChangePasswordDTO dto) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BaseException("用户不存在");
+        }
+        if (!passwordEncoder.matches(dto.getOldPassword(), user.getPassword())) {
+            throw new BaseException("原密码错误");
+        }
+        user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
+        userMapper.updateById(user);
     }
 }
