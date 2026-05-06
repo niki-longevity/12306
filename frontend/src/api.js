@@ -20,4 +20,16 @@ export const searchStations = (keyword) =>
   api.get('/api/ticket/station/search', { params: { keyword } });
 export const getStationCities = () =>
   api.get('/api/ticket/station/cities');
+
+// 乘车人管理
+export const getPassengers = () => api.get('/api/user/passenger/list');
+export const addPassenger = (data) => api.post('/api/user/passenger', data);
+export const updatePassenger = (id, data) => api.put(`/api/user/passenger/${id}`, data);
+export const deletePassenger = (id) => api.delete(`/api/user/passenger/${id}`);
+
+// 个人资料
+export const getProfile = () => api.get('/api/user/profile');
+export const updateProfile = (data) => api.put('/api/user/profile', data);
+export const changePassword = (data) => api.put('/api/user/profile/password', data);
+
 export default api;
