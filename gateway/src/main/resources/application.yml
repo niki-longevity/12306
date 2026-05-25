@@ -3,6 +3,8 @@ server:
 
 spring:
   cloud:
+    compatibility-verifier:
+      enabled: false
     gateway:
       routes:
         # User Service
@@ -14,7 +16,7 @@ spring:
             - StripPrefix=0
         # Ticket Service
         - id: ticket-service
-          uri: http://localhost:8082
+          uri: http://localhost:8092
           predicates:
             - Path=/ticket/**
           filters:

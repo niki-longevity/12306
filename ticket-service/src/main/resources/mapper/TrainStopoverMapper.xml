@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.project.ticket.mapper.TrainStopoverMapper">
+    <insert id="insertBatch" parameterType="list">
+        INSERT INTO train_stopover (date, code, stopover_station, station_index, in_time, out_time, mileage) VALUES
+        <foreach collection="list" item="item" separator=",">
+            (#{item.date}, #{item.code}, #{item.stopoverStation}, #{item.stationIndex},
+             #{item.inTime}, #{item.outTime}, #{item.mileage})
+        </foreach>
+    </insert>
+</mapper>

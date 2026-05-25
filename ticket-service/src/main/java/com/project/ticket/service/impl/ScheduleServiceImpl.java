@@ -16,6 +16,7 @@ import org.springframework.util.CollectionUtils;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 @Slf4j
@@ -31,7 +32,6 @@ public class ScheduleServiceImpl implements ScheduleService {
     private final ObjectMapper objectMapper;
 
     @Override
-    @Transactional
     public void advanceWindow() {
         ScheduleWindow window = windowMapper.selectById(1);
         if (window == null) {
@@ -47,7 +47,6 @@ public class ScheduleServiceImpl implements ScheduleService {
     }
 
     @Override
-    @Transactional
     public void initialize15Days(LocalDate fromDate) {
         ScheduleWindow existing = windowMapper.selectById(1);
         if (existing != null && existing.getWindowEnd() != null) {
@@ -93,19 +92,25 @@ public class ScheduleServiceImpl implements ScheduleService {
             log.warn("No train templates found for date {}", date);
             return;
         }
+
+        // 一次性加载全部 stopover，按 train_code 分组，避免 1077 次逐条 SQL
+        List<TrainTemplateStopover> allStops = stopoverMapper.selectList(
+                new LambdaQueryWrapper<TrainTemplateStopover>().orderByAsc(TrainTemplateStopover::getStationIndex));
+        Map<String, List<TrainTemplateStopover>> stopMap = allStops.stream()
+                .collect(Collectors.groupingBy(TrainTemplateStopover::getTrainCode));
+
+        List<TrainStopover> allStopovers = new ArrayList<>();
+
         for (TrainTemplate tmpl : templates) {
-            List<TrainTemplateStopover> stops = stopoverMapper.selectList(
-                    new LambdaQueryWrapper<TrainTemplateStopover>()
-                            .eq(TrainTemplateStopover::getTrainCode, tmpl.getTrainCode())
-                            .orderByAsc(TrainTemplateStopover::getStationIndex));
-            if (stops.size() < 2) continue;
+            List<TrainTemplateStopover> stops = stopMap.get(tmpl.getTrainCode());
+            if (stops == null || stops.size() < 2) continue;
 
             for (TrainTemplateStopover s : stops) {
                 TrainStopover entity = TrainStopover.builder()
                         .date(date).code(tmpl.getTrainCode())
                         .stopoverStation(s.getStationName()).stationIndex(s.getStationIndex())
                         .inTime(s.getInTime()).outTime(s.getOutTime()).mileage(s.getMileage()).build();
-                trainStopoverMapper.insert(entity);
+                allStopovers.add(entity);
             }
 
             int secCount = stops.size() - 1;
@@ -126,6 +131,12 @@ public class ScheduleServiceImpl implements ScheduleService {
                 }
             }
         }
+
+        // 批量写入 MySQL（一次 SQL 替代逐条 INSERT）
+        if (!allStopovers.isEmpty()) {
+            trainStopoverMapper.insertBatch(allStopovers);
+            log.debug("Batch inserted {} stopover rows for date {}", allStopovers.size(), date);
+        }
     }
 
     private void buildAndCacheTrainBO(LocalDate date, TrainTemplate tmpl, List<TrainTemplateStopover> stops,
@@ -134,7 +145,7 @@ public class ScheduleServiceImpl implements ScheduleService {
                 TicketListBO.StopoverStation.builder()
                         .stopoverStation(s.getStationName()).stationIndex(s.getStationIndex())
                         .inTime(s.getInTime()).outTime(s.getOutTime()).mileage(s.getMileage()).build()
-        ).toList();
+        ).collect(Collectors.toList());
 
         Map<String, TicketListBO.IntervalStockStatus> stockMap = new HashMap<>();
         for (String seat : List.of("business", "firstClass", "secondClass")) {
@@ -146,15 +157,15 @@ public class ScheduleServiceImpl implements ScheduleService {
 
         TicketListBO.CarriageInfo businessInfo = businessCars > 0
                 ? TicketListBO.CarriageInfo.builder().carriageType("商务座车厢")
-                    .carriageIndexes(IntStream.rangeClosed(1, businessCars).boxed().toList()).build()
+                    .carriageIndexes(IntStream.rangeClosed(1, businessCars).boxed().collect(Collectors.toList())).build()
                 : null;
         TicketListBO.CarriageInfo firstInfo = firstCars > 0
                 ? TicketListBO.CarriageInfo.builder().carriageType("一等座车厢")
-                    .carriageIndexes(IntStream.rangeClosed(businessCars + 1, businessCars + firstCars).boxed().toList()).build()
+                    .carriageIndexes(IntStream.rangeClosed(businessCars + 1, businessCars + firstCars).boxed().collect(Collectors.toList())).build()
                 : null;
         TicketListBO.CarriageInfo secondInfo = secondCars > 0
                 ? TicketListBO.CarriageInfo.builder().carriageType("二等座车厢")
-                    .carriageIndexes(IntStream.rangeClosed(businessCars + firstCars + 1, businessCars + firstCars + secondCars).boxed().toList()).build()
+                    .carriageIndexes(IntStream.rangeClosed(businessCars + firstCars + 1, businessCars + firstCars + secondCars).boxed().collect(Collectors.toList())).build()
                 : null;
 
         TicketListBO bo = TicketListBO.builder().date(date).code(tmpl.getTrainCode())
