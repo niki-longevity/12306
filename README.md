@@ -2,7 +2,9 @@
 
 仿 12306 的微服务火车票预订平台，支持查票、购票、支付、退票、乘车人管理。
 
-**Spring Boot 3.5 + ShardingSphere 分库分表 + Redis Bitmap 座位管理 + RocketMQ + React 18**
+**Spring Boot 3.5 + ShardingSphere 分库分表 + Redis Bitmap 座位管理 + RocketMQ + React 19**
+
+🚄 940 趟真实车次 · 169 个全国站点 · 35+ 条高铁线路
 
 ---
 
@@ -20,7 +22,7 @@ graph TD
 
     subgraph Services
         User[user-service :8081<br/>用户/登录/乘车人]
-        Ticket[ticket-service :8082<br/>查票/购票/Lua脚本]
+        Ticket[ticket-service :8092<br/>查票/购票/Lua脚本]
         Order[order-service :8083<br/>订单/支付/取消/退票]
     end
 
@@ -120,7 +122,7 @@ sequenceDiagram
 │   ├── 用户注册/登录（JWT + BCrypt）
 │   ├── 乘客管理 CRUD
 │   └── 个人资料/改密
-├── ticket-service/      # 票务服务 :8082
+├── ticket-service/      # 票务服务 :8092
 │   ├── 车次查询（城市/拼音搜索）
 │   ├── 购票（Redis Lua 原子扣减）
 │   └── 15天滑动窗口时刻表生成
@@ -215,6 +217,10 @@ npm run dev
 | 用户注册/登录 | 手机号+用户名双模式，JWT认证，密码显隐，记住我 |
 | 车次查询 | 城市/站名/拼音搜索，出发到达互换 |
 | 购票 | 座位类型选择，从已保存乘车人勾选或手动输入 |
+| 模拟支付 | 支付方式选择、网关延迟模拟、交易号生成 |
+| 管理后台 | 车次模板/站点字典/数据统计面板 |
+| Swagger 文档 | SpringDoc OpenAPI，各服务独立文档页 |
+| 健康检查 | Spring Boot Actuator，各服务 /actuator/health |
 | 订单管理 | 待支付/已支付/已取消，支付/取消/退票 |
 | 乘车人管理 | CRUD，身份证校验码验证，成人/学生/儿童类型 |
 | 个人资料 | 头像、脱敏信息、改手机号/密码 |

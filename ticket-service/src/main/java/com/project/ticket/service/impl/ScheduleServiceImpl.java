@@ -49,22 +49,43 @@ public class ScheduleServiceImpl implements ScheduleService {
     @Override
     public void initialize15Days(LocalDate fromDate) {
         ScheduleWindow existing = windowMapper.selectById(1);
-        if (existing != null && existing.getWindowEnd() != null) {
-            log.info("Schedule window already initialized: {} -> {}",
-                    existing.getWindowStart(), existing.getWindowEnd());
+        LocalDate expectedEnd = fromDate.plusDays(14);
+
+        // 首次启动：窗口不存在
+        if (existing == null || existing.getWindowEnd() == null) {
+            for (int i = 0; i < 15; i++) {
+                generateDayData(fromDate.plusDays(i));
+            }
+            ScheduleWindow window = ScheduleWindow.builder()
+                    .id(1).windowStart(fromDate).windowEnd(expectedEnd).build();
+            windowMapper.insert(window);
+            log.info("Initialized 15-day schedule window: {} -> {}", fromDate, expectedEnd);
             return;
         }
-        for (int i = 0; i < 15; i++) {
-            generateDayData(fromDate.plusDays(i));
+
+        // 窗口已存在，检查是否需要追补
+        LocalDate currentEnd = existing.getWindowEnd();
+
+        if (!currentEnd.isBefore(expectedEnd)) {
+            log.info("Schedule window up to date: {} -> {}", existing.getWindowStart(), currentEnd);
+            return;
         }
-        ScheduleWindow window = ScheduleWindow.builder()
-                .id(1).windowStart(fromDate).windowEnd(fromDate.plusDays(14)).build();
-        if (existing != null) {
-            windowMapper.updateById(window);
-        } else {
-            windowMapper.insert(window);
+
+        // 需要追补：从窗口结束日+1 到 今天+14
+        LocalDate catchUpFrom = currentEnd.plusDays(1);
+        log.info("Catching up schedule from {} to {} (gap: {} days)",
+                catchUpFrom, expectedEnd, catchUpFrom.until(expectedEnd).getDays() + 1);
+        for (LocalDate d = catchUpFrom; !d.isAfter(expectedEnd); d = d.plusDays(1)) {
+            generateDayData(d);
         }
-        log.info("Initialized 15-day schedule window: {} -> {}", fromDate, fromDate.plusDays(14));
+
+        // 更新窗口：如果窗口已完全过期则重置起点，否则保持原起点
+        LocalDate newStart = currentEnd.isBefore(fromDate) ? fromDate : existing.getWindowStart();
+        existing.setWindowStart(newStart);
+        existing.setWindowEnd(expectedEnd);
+        windowMapper.updateById(existing);
+        log.info("Schedule window updated: {} -> {} (was {} -> {})",
+                newStart, expectedEnd, existing.getWindowStart(), currentEnd);
     }
 
     @Override

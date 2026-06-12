@@ -1,4 +1,8 @@
 spring:
+  sql:
+    init:
+      mode: never   # 首次启动改为 always 加载种子数据，之后改为 never
+      continue-on-error: true
   data:
     redis:
       host: ${REDIS_HOST:172.22.32.238}

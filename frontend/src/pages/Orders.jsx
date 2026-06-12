@@ -4,6 +4,7 @@ import { getOrders, cancelOrder } from '../api';
 
 const statusLabel = { UNPAID: '待支付', PAID: '已支付', CANCELLED: '已取消' };
 const statusColor = { UNPAID: '#e8870a', PAID: '#2e7d32', CANCELLED: '#999' };
+const seatNames = { 0: '商务座', 1: '一等座', 2: '二等座' };
 
 export default function Orders() {
   const [orders, setOrders] = useState([]);
@@ -46,7 +47,7 @@ export default function Orders() {
                 <td><strong>{o.trainCode}</strong></td>
                 <td>{o.date}</td>
                 <td>{o.startStation} → {o.endStation}</td>
-                <td>{o.carriageNum}车{o.seatNum}座</td>
+                <td>{seatNames[o.seatType] || '—'} {o.carriageNum}车{o.seatNum}座</td>
                 <td><span style={{ color: statusColor[o.status] || '#999', fontWeight: 600 }}>
                   {statusLabel[o.status] || o.status}
                 </span></td>

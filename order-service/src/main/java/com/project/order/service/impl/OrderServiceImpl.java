@@ -101,8 +101,16 @@ public class OrderServiceImpl implements OrderService {
         if (rows == 0) {
             throw new BaseException("支付失败：订单不存在或已过期");
         }
-        log.info("订单支付成功：orderId={}", orderId);
-        return orderMapper.selectById(orderId);
+
+        // 模拟第三方支付网关延迟
+        try { Thread.sleep(800 + (long)(Math.random() * 800)); } catch (InterruptedException ignored) {}
+
+        Order order = orderMapper.selectById(orderId);
+        // 生成模拟交易号
+        String paymentNo = "PAY" + System.currentTimeMillis() + String.format("%04d", (int)(Math.random() * 10000));
+        order.setPaymentNo(paymentNo);
+        log.info("订单支付成功：orderId={}, paymentNo={}", orderId, paymentNo);
+        return order;
     }
 
     @Override

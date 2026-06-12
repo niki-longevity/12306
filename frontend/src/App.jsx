@@ -8,6 +8,7 @@ import Orders from './pages/Orders';
 import Pay from './pages/Pay';
 import Passengers from './pages/Passengers';
 import Profile from './pages/Profile';
+import Admin from './pages/Admin';
 import { ToastProvider } from './components/Toast';
 import { getProfile } from './api';
 import './App.css';
@@ -38,6 +39,7 @@ function Header() {
       <nav>
         <Link to="/tickets">查票</Link>
         <Link to="/orders">订单</Link>
+        <Link to="/admin">管理</Link>
         {token && <Link to="/passengers">乘车人</Link>}
         {token ? (
           <div className="user-menu" onClick={() => setShowMenu(!showMenu)}>
@@ -73,6 +75,7 @@ function AppRoutes() {
       <Route path="/pay/:orderId" element={token ? <Pay /> : <Navigate to="/login" state={{ from: location.pathname }} />} />
       <Route path="/passengers" element={token ? <Passengers /> : <Navigate to="/login" state={{ from: '/passengers' }} />} />
       <Route path="/profile" element={token ? <Profile /> : <Navigate to="/login" state={{ from: '/profile' }} />} />
+      <Route path="/admin" element={<Admin />} />
       <Route path="*" element={<Navigate to="/tickets" />} />
     </Routes>
   );

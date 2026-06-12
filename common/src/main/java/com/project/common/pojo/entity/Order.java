@@ -42,6 +42,10 @@ public class Order implements Serializable {
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
+    // Payment
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String paymentNo;    // 模拟交易号(非持久化)
+
     // Lua rollback context
     private Integer startSection;
     private Integer endSection;

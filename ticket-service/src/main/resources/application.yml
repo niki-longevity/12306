@@ -27,6 +27,15 @@ rocketmq:
   producer:
     group: ticket-outbox-producer
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
 mybatis-plus:
   configuration:
     default-executor-type: simple
