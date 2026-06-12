@@ -15,8 +15,8 @@ public class RBloomFilterConfig {
     private String host;
 
     // Redis密码
-//    @Value("${spring.data.redis.password:}")
-//    private String password;
+    @Value("${spring.data.redis.password:}")
+    private String password;
 
 
     @Bean
@@ -24,7 +24,7 @@ public class RBloomFilterConfig {
         Config config = new Config();
         // 修正地址格式，确保加前缀
         config.useSingleServer()
-//                .setPassword(password)
+                .setPassword(password)
                 .setAddress("redis://" + host + ":6379");
         return Redisson.create(config);
     }
