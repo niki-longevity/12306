@@ -14,6 +14,7 @@ import java.io.Serial;
 import java.io.Serializable;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 
 @Data
 @Builder
@@ -45,6 +46,11 @@ public class Order implements Serializable {
     // Payment
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     private String paymentNo;    // 模拟交易号(非持久化)
+
+    // 发车时间(非持久化，查询时填充，用于前端判断是否已发车)
+    @JsonFormat(pattern = "HH:mm:ss")
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private LocalTime departureTime;
 
     // Lua rollback context
     private Integer startSection;

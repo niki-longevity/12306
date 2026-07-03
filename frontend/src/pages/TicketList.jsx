@@ -7,7 +7,13 @@ import CityPanel from '../components/CityPanel';
 const seatNames = { 0: '商务座', 1: '一等座', 2: '二等座' };
 
 export default function TicketList() {
-  const [date, setDate] = useState('2026-05-06');
+  const [date, setDate] = useState(() => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, '0');
+    const d = String(today.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  });
   const [start, setStart] = useState('广州南站');
   const [end, setEnd] = useState('武汉站');
   const [trains, setTrains] = useState([]);
@@ -17,9 +23,10 @@ export default function TicketList() {
 
   const search = async () => {
     setLoading(true);
+    setTrains([]);
     try {
       const res = await queryTickets(date, start, end);
-      if (res.data.code === 1) setTrains(res.data.data);
+      if (res.data.code === 1) setTrains(res.data.data || []);
     } catch (e) { alert('查询失败'); }
     setLoading(false);
   };
@@ -28,6 +35,7 @@ export default function TicketList() {
     const tmp = start;
     setStart(end);
     setEnd(tmp);
+    setTrains([]);
   };
 
   return (

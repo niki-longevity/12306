@@ -31,6 +31,18 @@ export default function Orders() {
     } catch { alert('网络错误'); }
   };
 
+  const isDeparted = (o) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const depDate = new Date(o.date + 'T00:00:00');
+    if (depDate < today) return true;          // 日期已过 → 一定已发车
+    if (depDate > today) return false;         // 日期是未来 → 未发车
+    // 今天发车，看具体发车时间
+    if (!o.departureTime) return false;
+    const dep = new Date(`${o.date}T${o.departureTime}`);
+    return new Date() > dep;
+  };
+
   return (
     <div>
       <h2>我的订单</h2>
@@ -58,7 +70,7 @@ export default function Orders() {
                   {o.status === 'UNPAID' && (
                     <button onClick={() => cancel(o.id)}>取消订单</button>
                   )}
-                  {o.status === 'PAID' && (
+                  {o.status === 'PAID' && !isDeparted(o) && (
                     <button onClick={() => cancel(o.id)} style={{ background: '#e8870a' }}>退票</button>
                   )}
                 </td>

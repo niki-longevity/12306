@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.project.order.mapper.OrderMapper;
 import com.project.order.mapper.OrderPassengerMapper;
 import com.project.order.mapper.SeatBitmapMapper;
+import com.project.order.mapper.DepartureTimeMapper;
 import com.project.common.pojo.entity.Order;
 import com.project.common.pojo.entity.OrderPassenger;
 import com.project.common.pojo.entity.SeatBitmap;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -30,6 +32,7 @@ public class OrderServiceImpl implements OrderService {
     private final OrderMapper orderMapper;
     private final OrderPassengerMapper orderPassengerMapper;
     private final SeatBitmapMapper seatBitmapMapper;
+    private final DepartureTimeMapper departureTimeMapper;
     private final StringRedisTemplate stringRedisTemplate;
 
     private static final DefaultRedisScript<Long> CONFLICT_FIX_LUA;
@@ -198,7 +201,13 @@ public class OrderServiceImpl implements OrderService {
         LambdaQueryWrapper<Order> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Order::getUserId, userId)
                .orderByDesc(Order::getCreateTime);
-        return orderMapper.selectList(wrapper);
+        List<Order> orders = orderMapper.selectList(wrapper);
+        // 填充发车时间，供前端判断是否已发车
+        for (Order o : orders) {
+            o.setDepartureTime(departureTimeMapper.findDepartureTime(
+                    o.getDate(), o.getTrainCode(), o.getStartStation()));
+        }
+        return orders;
     }
 
     @Override
